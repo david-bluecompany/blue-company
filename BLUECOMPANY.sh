@@ -4,8 +4,8 @@
 #           Sistema Corporativo de Gestión SSH / WS / UDP
 #                        Edición: ENTERPRISE v9.1
 # ==============================================================================
-VERSION_SCRIPT="9.1"
-EDICION_SCRIPT="ENTERPRISE v9.1"
+VERSION_SCRIPT="9.2"
+EDICION_SCRIPT="ENTERPRISE v9.2"
 GITHUB_REPO_URL="https://github.com/david-bluecompany/blue-company"
 GITHUB_RAW_URL="https://raw.githubusercontent.com/david-bluecompany/blue-company/main/BLUECOMPANY.sh"
 GITHUB_VERSION_URL="https://raw.githubusercontent.com/david-bluecompany/blue-company/main/VERSION"
