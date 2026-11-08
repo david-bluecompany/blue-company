@@ -2,9 +2,9 @@
 # ==============================================================================
 #               BLUE COMPANY • CLOUD NETWORK MANAGER
 #           Sistema Corporativo de Gestión SSH / WS / UDP
-#                        Edición: ENTERPRISE v9.0 HARDENED
+#                        Edición: ENTERPRISE v9.1
 # ==============================================================================
-# VERSION_TAG="9.2"
+# VERSION_TAG="9.1"
 # REPO_URL="https://github.com/david-bluecompany/blue-company"
 # RAW_SCRIPT_URL="https://raw.githubusercontent.com/david-bluecompany/blue-company/main/BLUECOMPANY.sh"
 # RAW_VERSION_URL="https://raw.githubusercontent.com/david-bluecompany/blue-company/main/VERSION"
@@ -15,16 +15,14 @@ if [ "$EUID" -ne 0 ]; then
     exec sudo "$0" "$@"
 fi
 
-# MODO PROTEGIDO: no se permite reconfigurar servicios, firewall ni red automáticamente.
-BLUECOMPANY_SAFE_MODE=1
 export LC_ALL=C
 export PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
 
 # ------------------------------------------------------------------------------
 # CONSTANTES DE VERSIÓN, RUTAS Y ARCHIVOS DEL SISTEMA
 # ------------------------------------------------------------------------------
-VERSION_SCRIPT="9.0.1-hardened"
-EDICION_SCRIPT="ENTERPRISE v9.0 HARDENED"
+VERSION_SCRIPT="9.1"
+EDICION_SCRIPT="ENTERPRISE v9.1"
 GITHUB_REPO_URL="https://github.com/david-bluecompany/blue-company"
 GITHUB_RAW_URL="https://raw.githubusercontent.com/david-bluecompany/blue-company/main/BLUECOMPANY.sh"
 GITHUB_VERSION_URL="https://raw.githubusercontent.com/david-bluecompany/blue-company/main/VERSION"
@@ -33,15 +31,11 @@ BIN_TARGET="/usr/local/bin/adm-ssh"
 BIN_ALIAS="/usr/local/bin/blue"
 
 DB_LIMITS="/etc/ssh-limits.txt"
-BACKUP_FILE="/root/backup-clientes-blue.tar.gz"
-BACKUP_DIR="/var/backups/bluecompany"
 CONF_DIR="/etc/bluecompany"
 LOG_DIR="/var/log/bluecompany"
 
 VERSION_LOCAL_FILE="${CONF_DIR}/version.info"
 BLOCKED_USERS_DB="${CONF_DIR}/blocked_users.db"
-BLOCKED_IPS_DB="${CONF_DIR}/blocked_ips.db"
-WHITELIST_IPS_DB="${CONF_DIR}/whitelist_ips.db"
 
 LOCKS_LOG="${LOG_DIR}/locks.log"
 AUDIT_LOG="${LOG_DIR}/admin_audit.log"
@@ -52,28 +46,65 @@ UPDATE_LOCK="/run/bluecompany-update.lock"
 MONITOR_LOCK="/run/bluecompany-monitor.lock"
 UPDATE_CACHE="/run/bluecompany-update.cache"
 
+# Inicio automático únicamente para el administrador autorizado en SSH interactivo.
+configurar_inicio_automatico_ssh() {
+    local admin_user="${SUDO_USER:-$(logname 2>/dev/null || echo root)}"
+    [[ "$admin_user" =~ ^[a-z_][a-z0-9_-]*[$]?$ ]] || return 0
+    local hook="/etc/profile.d/bluecompany-panel.sh"
+    if [ -e "$hook" ] && [ -z "${SUDO_USER:-}" ]; then
+        return 0
+    fi
+    cat > "$hook" <<'SSHHOOK'
+# BLUE COMPANY: ejecutar solo en sesiones SSH interactivas del administrador configurado.
+if [[ $- == *i* && -n "${SSH_CONNECTION:-}" && -t 0 && -t 1 &&
+      "$(id -un 2>/dev/null)" == "__BLUECOMPANY_ADMIN_USER__" &&
+      -z "${BLUECOMPANY_PANEL_STARTED:-}" ]]; then
+    export BLUECOMPANY_PANEL_STARTED=1
+    if [[ "$(id -u)" -eq 0 ]]; then
+        /usr/local/bin/adm-ssh
+    else
+        sudo /usr/local/bin/adm-ssh
+    fi
+fi
+SSHHOOK
+    sed -i "s/__BLUECOMPANY_ADMIN_USER__/${admin_user}/g" "$hook"
+    chmod 644 "$hook"
+}
+
 # ------------------------------------------------------------------------------
 # AUTO-INSTALACIÓN TRANSPARENTE SI SE EJECUTA COMO INSTALADOR EXTERNO
 # ------------------------------------------------------------------------------
 inicializar_entorno_seguro() {
-    # Inicialización limitada a archivos propios de BLUE COMPANY.
-    # No modifica SSH, Dropbear, /etc/shells, cron, firewall, sysctl ni servicios externos.
-    install -d -m 700 "$CONF_DIR" "$LOG_DIR" "$BACKUP_DIR"
-    for f in "$DB_LIMITS" "$BLOCKED_USERS_DB" "$BLOCKED_IPS_DB" "$WHITELIST_IPS_DB" "$LOCKS_LOG" "$AUDIT_LOG" "$SECURITY_LOG"; do
-        [ -e "$f" ] || install -m 600 /dev/null "$f"
-        chmod 600 "$f" 2>/dev/null || true
+    mkdir -p "$CONF_DIR" "$LOG_DIR" /etc/dropbear
+    chmod 700 "$CONF_DIR" "$LOG_DIR" 2>/dev/null
+    configurar_inicio_automatico_ssh
+
+    for f in "$DB_LIMITS" "$BLOCKED_USERS_DB" "$LOCKS_LOG" "$AUDIT_LOG" "$SECURITY_LOG"; do
+        [ ! -f "$f" ] && touch "$f"
+        chmod 600 "$f" 2>/dev/null
     done
-    [ -e "$VERSION_LOCAL_FILE" ] || printf '%s\n' "$VERSION_SCRIPT" > "$VERSION_LOCAL_FILE"
-    chmod 600 "$VERSION_LOCAL_FILE" 2>/dev/null || true
+
+    echo "$VERSION_SCRIPT" > "$VERSION_LOCAL_FILE"
+    chmod 600 "$VERSION_LOCAL_FILE" 2>/dev/null
+
+    # Si se ejecuta desde curl/bash o desde un archivo distinto a /usr/local/bin/adm-ssh, instalar binario
+    local script_actual
+    script_actual=$(readlink -f "$0" 2>/dev/null || echo "$0")
+    if [ "$script_actual" != "$BIN_TARGET" ] && [ -f "$0" ]; then
+        if grep -q "BLUE COMPANY • CLOUD NETWORK MANAGER" "$0" 2>/dev/null; then
+            cp -f "$0" "$BIN_TARGET"
+            chmod 755 "$BIN_TARGET"
+            ln -sf "$BIN_TARGET" "$BIN_ALIAS"
+        fi
+    fi
+
 
 }
 
 # Modo instalación silenciosa por parámetro (--install-only)
 if [ "${1:-}" = "--install-only" ]; then
-    inicializar_entorno_seguro || exit 1
-    install -m 755 "$(readlink -f "$0")" "$BIN_TARGET" || exit 1
-    ln -sfn "$BIN_TARGET" "$BIN_ALIAS"
-    echo "[OK] Panel instalado en ${BIN_TARGET} (comando: blue o adm-ssh). No se modificaron servicios externos."
+    inicializar_entorno_seguro
+    echo "[✓] BLUE COMPANY ${EDICION_SCRIPT} instalado en ${BIN_TARGET} (comando: blue o adm-ssh)."
     exit 0
 fi
 
@@ -138,17 +169,6 @@ validar_entero_positivo() {
     [[ "$n" =~ ^[0-9]+$ ]] && [ "$n" -gt 0 ]
 }
 
-# Hash SHA-512-crypt para no guardar contraseñas en texto claro en la base local.
-hashear_contrasena() {
-    local clave="$1" salt hash
-    command -v openssl >/dev/null 2>&1 || return 1
-    salt=$(od -An -N8 -tx1 /dev/urandom 2>/dev/null | tr -d ' \n')
-    [ -n "$salt" ] || return 1
-    hash=$(openssl passwd -6 -salt "$salt" "$clave" 2>/dev/null) || return 1
-    [[ "$hash" == '$6$'* ]] || return 1
-    printf '%s' "$hash"
-}
-
 validar_ip_v4() {
     local ip="$1"
     if [[ "$ip" =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}$ ]]; then
@@ -181,8 +201,10 @@ migrar_db_limites() {
 
     while IFS=':' read -r u lim clave exp_ep estado_manual _ <&3; do
         [[ -z "$u" || "$u" =~ ^# ]] && continue
-        # Conservar registros aunque la cuenta del sistema no exista todavía.
-        # La sincronización de cuentas se realiza solo mediante acciones explícitas.
+        if ! id "$u" &>/dev/null; then
+            cambiado=1
+            continue
+        fi
         [[ ! "$lim" =~ ^[0-9]+$ || "$lim" -le 0 ]] && lim=1
         if [[ ! "$exp_ep" =~ ^[0-9]+$ ]]; then
             local exp_raw
@@ -238,7 +260,7 @@ bloquear_cuenta_sistema() {
     local u="$1"
     local motivo="${2:-BLOQUEO DE SISTEMA}"
     expulsar_sesiones_usuario "$u"
-    usermod -L -s /bin/false -e 1970-01-02 "$u" 2>/dev/null
+    usermod -L -s /bin/expired -e 1970-01-02 "$u" 2>/dev/null
     passwd -l "$u" &>/dev/null
     registrar_bloqueo_usuario "$u" "$motivo"
 }
@@ -252,11 +274,7 @@ desbloquear_cuenta_sistema() {
     usermod -U -s /bin/false -e "$f_chage" "$u" 2>/dev/null
     passwd -u "$u" &>/dev/null
     if [ -n "$clave" ] && [ "$clave" != "(Sin registro)" ]; then
-        if [[ "$clave" == '$6$'* || "$clave" == '$5$'* || "$clave" == '$y$'* ]]; then
-            echo "${u}:${clave}" | chpasswd -e 2>/dev/null
-        else
-            echo "${u}:${clave}" | chpasswd 2>/dev/null
-        fi
+        echo "${u}:${clave}" | chpasswd 2>/dev/null
     fi
     sed -i "/^${u}|/d" "$BLOCKED_USERS_DB" 2>/dev/null
 }
@@ -283,7 +301,7 @@ verificar_y_bloquear_vencidos_ahora() {
         if [ "$debe_bloquear" -eq 1 ]; then
             local sh_actual
             sh_actual=$(getent passwd "$u" | cut -d: -f7)
-            if [ "$sh_actual" != "/bin/false" ]; then
+            if [ "$sh_actual" != "/bin/expired" ]; then
                 bloquear_cuenta_sistema "$u" "$razon_bloqueo"
             fi
         fi
@@ -522,11 +540,20 @@ contar_conexiones_usuario() {
 # Expulsión estrictamente individual: NUNCA mata procesos globales de sshd, dropbear ni xray
 expulsar_sesiones_usuario() {
     local u="$1"
-    [ -z "$u" ] || [ "$u" = "root" ] && return 1
-    # Modo conservador: no mata procesos ni sesiones activas.
-    # Bloquear la cuenta evita nuevas autenticaciones; las sesiones existentes
-    # se mantienen para no interrumpir conexiones o procesos ajenos.
-    return 0
+    [ -z "$u" ] || [ "$u" = "root" ] && return
+    local mapa_db
+    mapa_db=$(obtener_mapa_dropbear)
+
+    pkill -KILL -u "$u" 2>/dev/null
+    ps -eo pid=,user=,args= 2>/dev/null | awk -v usr="$u" '$2=="root" && $0 ~ "sshd(-session)?: " usr "(\\[|@|$)" {print $1}' | xargs -r kill -9 2>/dev/null
+
+    if [ -n "$mapa_db" ]; then
+        local pids_db
+        pids_db=$(printf "%s\n" "$mapa_db" | awk -F':' -v usr="$u" '$2 == usr {print $1}')
+        for p in $pids_db; do
+            [[ "$p" =~ ^[0-9]+$ ]] && [ "$p" -gt 1 ] && kill -9 "$p" 2>/dev/null
+        done
+    fi
 }
 
 # Obtiene IP, tiempo conectado y consumo (bytes IO/Socket) de los procesos del usuario
@@ -594,15 +621,10 @@ obtener_telemetria_usuario() {
 # ------------------------------------------------------------------------------
 extraer_version_remota() {
     local v_remota=""
-    # 1. Intentar leer archivo VERSION dedicado
-    v_remota=$(curl -sL --max-time 3 "$GITHUB_VERSION_URL" 2>/dev/null | head -n 1 | tr -d '[:space:]vV')
-    if [[ ! "$v_remota" =~ ^[0-9]+\.[0-9]+(\.[0-9]+)?$ ]]; then
-        # 2. Extraer desde etiqueta VERSION_SCRIPT o VERSION_TAG en BLUECOMPANY.sh
-        local cab
-        cab=$(curl -sL --max-time 4 "$GITHUB_RAW_URL" 2>/dev/null | head -n 60)
-        v_remota=$(printf "%s\n" "$cab" | grep -E '^(# *VERSION_TAG=|VERSION_SCRIPT=)' | head -n 1 | cut -d'"' -f2 | tr -d '[:space:]vV')
-    fi
-    echo "$v_remota"
+    v_remota=$(curl -fsSL --connect-timeout 5 --max-time 10 "$GITHUB_VERSION_URL" 2>/dev/null) || return 1
+    v_remota=$(printf '%s' "$v_remota" | tr -d '[:space:]vV')
+    [[ "$v_remota" =~ ^[0-9]+\.[0-9]+(\.[0-9]+)?$ ]] || return 1
+    printf '%s\n' "$v_remota"
 }
 
 comparar_versiones_mayor() {
@@ -639,7 +661,7 @@ verificar_actualizacion_cache() {
 }
 
 # ------------------------------------------------------------------------------
-# ENCABEZADO CORPORATIVO BLUE COMPANY v9.0 ENTERPRISE
+# ENCABEZADO CORPORATIVO BLUE COMPANY v9.1 ENTERPRISE
 # ------------------------------------------------------------------------------
 generar_banner() {
     local ip cpu ram_data ram_libre ram_total ram_porc net_data rx_gb tx_gb
@@ -697,7 +719,7 @@ generar_banner() {
 
     echo -e "${C_BLUE}╔══════════════════════════════════════════════════════╗${C_RESET}"
     echo -e "${C_BLUE}║${C_BBLUE}        BLUE COMPANY • CLOUD NETWORK MANAGER          ${C_RESET}${C_BLUE}║${C_RESET}"
-    echo -e "${C_BLUE}║${C_BHEADER}       Sistema Corporativo SSH/WS • ENTERPRISE v9.0   ${C_RESET}${C_BLUE}║${C_RESET}"
+    echo -e "${C_BLUE}║${C_BHEADER}       Sistema Corporativo SSH/WS • ENTERPRISE v9.1   ${C_RESET}${C_BLUE}║${C_RESET}"
     echo -e "${C_BLUE}╠══════════════════════════════════════════════════════╣${C_RESET}"
     printf "${C_BLUE}║${C_RESET} ${C_CYAN}IP Servidor:${C_RESET} ${C_WHITE}%-19s${C_RESET} ${C_CYAN}CPU Uso:${C_RESET} ${C_YELLOW}%-10s${C_RESET} ${C_BLUE}║${C_RESET}\n" "$ip" "$cpu"
     printf "${C_BLUE}║${C_RESET} ${C_CYAN}RAM Libre  :${C_RESET} ${C_GREEN}%-11s${C_RESET} ${C_CYAN}Total:${C_RESET} ${C_WHITE}%-10s${C_RESET} ${C_YELLOW}(%-4s)${C_RESET}   ${C_BLUE}║${C_RESET}\n" "$ram_libre" "$ram_total" "$ram_porc"
@@ -713,7 +735,8 @@ generar_banner() {
 }
 
 mostrar_pantalla_encabezado() {
-    # La apertura del panel es de solo lectura respecto a las cuentas existentes.
+    migrar_db_limites
+    verificar_y_bloquear_vencidos_ahora
     local b
     b=$(generar_banner)
     clear
@@ -837,21 +860,9 @@ crear_usuario() {
         return
     fi
 
-    if ! echo "${usuario}:${clave}" | chpasswd; then
-        userdel "$usuario" 2>/dev/null
-        echo -e "\n${C_RED}  [!] No se pudo establecer la contraseña; alta cancelada.${C_RESET}"
-        read -r -p "  Presiona Enter para continuar..."
-        return
-    fi
-    local clave_hash
-    clave_hash=$(hashear_contrasena "$clave") || {
-        userdel "$usuario" 2>/dev/null
-        echo -e "\n${C_RED}  [!] No se pudo generar el hash seguro. Alta revertida; no se guardó en la base.${C_RESET}"
-        read -r -p "  Presiona Enter para continuar..."
-        return
-    }
+    echo "${usuario}:${clave}" | chpasswd
     sed -i "/^${usuario}:/d" "$DB_LIMITS"
-    echo "${usuario}:${limite}:${clave_hash}:${exp_epoch}:ACTIVO" >> "$DB_LIMITS"
+    echo "${usuario}:${limite}:${clave}:${exp_epoch}:ACTIVO" >> "$DB_LIMITS"
     chmod 600 "$DB_LIMITS"
 
     registrar_accion_admin "CREAR_USUARIO" "Usuario=${usuario} Limite=${limite} Duracion=${txt_dur}"
@@ -902,13 +913,6 @@ renovar_usuario() {
     fecha_legible=$(date -d "@$exp_epoch" "+%Y-%m-%d %H:%M")
 
     desbloquear_cuenta_sistema "$usuario" "$clave_actual" "$exp_epoch"
-    if [[ "$clave_actual" != '$6$'* && "$clave_actual" != '$5$'* && "$clave_actual" != '$y$'* && -n "$clave_actual" ]]; then
-        clave_actual=$(hashear_contrasena "$clave_actual") || {
-            echo -e "  ${C_RED}[!] No se pudo proteger la contraseña antigua; no se modificó el registro.${C_RESET}"
-            read -r -p "  Presiona Enter para volver..."
-            return
-        }
-    fi
 
     sed -i "/^${usuario}:/d" "$DB_LIMITS"
     echo "${usuario}:${lim_actual}:${clave_actual}:${exp_epoch}:ACTIVO" >> "$DB_LIMITS"
@@ -956,18 +960,9 @@ modificar_usuario() {
     read -r -p "  ► Nueva contraseña [Actual conservada]: " nueva_clave
     if [ -n "$nueva_clave" ]; then
         nueva_clave=$(echo "$nueva_clave" | tr -d ':')
-        if ! echo "${usuario}:${nueva_clave}" | chpasswd; then
-            echo -e "  ${C_RED}[!] No se pudo actualizar la contraseña.${C_RESET}"
-            read -r -p "  Presiona Enter para volver..."
-            return
-        fi
-        clave_actual=$(hashear_contrasena "$nueva_clave") || {
-            passwd -l "$usuario" 2>/dev/null
-            echo -e "  ${C_RED}[!] Falló el hash seguro; cuenta bloqueada por precaución.${C_RESET}"
-            read -r -p "  Presiona Enter para volver..."
-            return
-        }
-        echo -e "  ${C_GREEN}[✓] Contraseña actualizada y almacenada como hash.${C_RESET}"
+        echo "${usuario}:${nueva_clave}" | chpasswd
+        clave_actual="$nueva_clave"
+        echo -e "  ${C_GREEN}[✓] Contraseña actualizada correctamente.${C_RESET}"
     fi
 
     read -r -p "  ► Nuevo límite disp. [$lim_actual]: " nuevo_limite
@@ -976,13 +971,6 @@ modificar_usuario() {
         echo -e "  ${C_GREEN}[✓] Límite actualizado a $lim_actual dispositivos.${C_RESET}"
     fi
 
-    if [[ "$clave_actual" != '$6$'* && "$clave_actual" != '$5$'* && "$clave_actual" != '$y$'* && "$clave_actual" != "(Sin registro)" && -n "$clave_actual" ]]; then
-        clave_actual=$(hashear_contrasena "$clave_actual") || {
-            echo -e "  ${C_RED}[!] No se pudo convertir la contraseña antigua a hash; registro no modificado.${C_RESET}"
-            read -r -p "  Presiona Enter para volver..."
-            return
-        }
-    fi
     sed -i "/^${usuario}:/d" "$DB_LIMITS"
     echo "${usuario}:${lim_actual}:${clave_actual}:${exp_actual}:${est_actual}" >> "$DB_LIMITS"
 
@@ -1304,7 +1292,7 @@ listar_usuarios_en_vivo() {
 
                 if [ "$est_manual" = "SUSPENDIDO" ] || [ "$est_manual" = "BLOQUEADO_LIMITE" ]; then
                     estado="${C_YELLOW}⏸ Bloq.${C_RESET}"
-                elif [ "$dias_txt" = "0m" ] || [ "$sh_usr" = "/bin/false" ]; then
+                elif [ "$dias_txt" = "0m" ] || [ "$sh_usr" = "/bin/expired" ]; then
                     estado="${C_RED}✖ Vencido${C_RESET}"
                 elif [ "$activas" -gt "$limite" ]; then
                     estado="${C_RED}▲ Excedido${C_RESET}"
@@ -1407,7 +1395,10 @@ gestion_bloqueos_automaticos() {
         1) controlar_acceso_usuario ;;
         2) instalar_limitador_auto ;;
         3)
-            echo -e "  ${C_YELLOW}[!] Acción protegida: el panel no detendrá ni deshabilitará servicios existentes.${C_RESET}"
+            systemctl stop blue-limiter &>/dev/null
+            systemctl disable blue-limiter &>/dev/null
+            registrar_accion_admin "DETENER_LIMITADOR" "Auto-Limitador desactivado manualmente"
+            echo -e "\n  ${C_YELLOW}[!] Auto-Limitador detenido.${C_RESET}"
             read -r -p "  Presiona Enter para volver..."
             ;;
         *) return ;;
@@ -1457,78 +1448,96 @@ consultar_historial_sistema() {
 
 centro_seguridad_vps() {
     mostrar_pantalla_encabezado
-    local ip_admin_actual
-    ip_admin_actual=$(echo "${SSH_CLIENT:-}" | awk '{print $1}')
-    if validar_ip_v4 "$ip_admin_actual"; then
-        grep -qxF "$ip_admin_actual" "$WHITELIST_IPS_DB" 2>/dev/null || echo "$ip_admin_actual" >> "$WHITELIST_IPS_DB"
+    echo -e "${C_NEON}┌──── CENTRO DE SEGURIDAD Y ESTADO DEL SERVIDOR ──────┐${C_RESET}"
+    echo -e "${C_CYAN}Servicios principales:${C_RESET}"
+    local svc
+    for svc in ssh fail2ban xray x-ui 3x-ui; do
+        if systemctl list-unit-files "${svc}.service" --no-legend 2>/dev/null | grep -q "${svc}.service"; then
+            if systemctl is-active --quiet "$svc" 2>/dev/null; then
+                printf "  %-12s ${C_GREEN}ACTIVO${C_RESET}\n" "$svc"
+            else
+                printf "  %-12s ${C_RED}DETENIDO${C_RESET}\n" "$svc"
+            fi
+        elif pgrep -afi "$svc" >/dev/null 2>&1; then
+            printf "  %-12s ${C_GREEN}PROCESO ACTIVO${C_RESET}\n" "$svc"
+        else
+            printf "  %-12s ${C_YELLOW}NO DETECTADO${C_RESET}\n" "$svc"
+        fi
+    done
+    echo -e "\n${C_CYAN}Firewall (solo consulta):${C_RESET}"
+    if command -v ufw >/dev/null 2>&1; then ufw status 2>/dev/null | head -n 8; else echo "  UFW no instalado"; fi
+    if command -v iptables >/dev/null 2>&1; then
+        echo "  iptables: reglas INPUT=$(iptables -S INPUT 2>/dev/null | wc -l), FORWARD=$(iptables -S FORWARD 2>/dev/null | wc -l)"
     fi
+    echo -e "\n${C_CYAN}Puertos en escucha:${C_RESET}"
+    if command -v ss >/dev/null 2>&1; then ss -lntup 2>/dev/null | head -n 20; else echo "  ss no disponible"; fi
+    echo -e "\n${C_CYAN}Recursos:${C_RESET}"
+    printf "  CPU: %s\n" "$(obtener_uso_cpu)"
+    free -h 2>/dev/null | awk 'NR==1 || NR==2 {print "  "$0}'
+    df -hP / 2>/dev/null | awk 'NR==1 || NR==2 {print "  "$0}'
+    echo -e "\n${C_CYAN}Permisos del panel y archivos de configuración:${C_RESET}"
+    for f in "$BIN_TARGET" /etc/ssh/sshd_config /etc/bluecompany /var/log/bluecompany; do
+        if [ -e "$f" ]; then stat -c '  %A %U:%G %n' "$f" 2>/dev/null; else echo "  No existe: $f"; fi
+    done
+    echo -e "\n${C_CYAN}Últimos registros de seguridad:${C_RESET}"
+    if [ -f /var/log/auth.log ]; then tail -n 8 /var/log/auth.log 2>/dev/null
+    else journalctl -u ssh --no-pager -n 8 2>/dev/null
+    fi
+    echo -e "\n${C_YELLOW}Modo de solo lectura: no bloquea IP ni modifica el firewall.${C_RESET}"
+    read -r -p "  Presiona Enter para volver..."
+}
 
+escudo_y_mantenimiento_vps() {
+    mostrar_pantalla_encabezado
     local estado_bt="${C_YELLOW}INACTIVO${C_RESET}"
     if iptables -L FORWARD -n 2>/dev/null | grep -q "BitTorrent" || iptables -L OUTPUT -n 2>/dev/null | grep -q "BitTorrent"; then
         estado_bt="${C_GREEN}PROTEGIDO (ACTIVO)${C_RESET}"
     fi
 
-    local total_ips_bloq=0
-    [ -s "$BLOCKED_IPS_DB" ] && total_ips_bloq=$(grep -cvE '^(#|$)' "$BLOCKED_IPS_DB" 2>/dev/null || echo 0)
-
-    echo -e "${C_NEON}┌────── CENTRO DE SEGURIDAD Y PROTECCIÓN BRUTE-FORCE ──┐${C_RESET}"
-    echo -e "  Tu IP Admin Protegida (Whitelist): ${C_GREEN}${ip_admin_actual:-Sesión Local}${C_RESET}"
-    echo -e "  Escudo Anti-Torrent / P2P        : $estado_bt"
-    echo -e "  IPs Bloqueadas por Fuerza Bruta  : ${C_YELLOW}${total_ips_bloq}${C_RESET}"
+    echo -e "${C_NEON}┌────── ESCUDO ANTI-TORRENT Y LIMPIEZA SEGURA ─────────┐${C_RESET}"
+    echo -e "  Estado Anti-Torrent / Anti-DMCA: $estado_bt"
     echo -e "${C_BLUE}────────────────────────────────────────────────────────${C_RESET}"
-    echo -e "  ${C_WHITE}[1]${C_RESET} Detectar Intentos de Acceso Sospechosos (Fuerza Bruta)"
-    echo -e "  ${C_WHITE}[2]${C_RESET} Bloquear IP Atacante con Comprobación Segura"
-    echo -e "  ${C_WHITE}[3]${C_RESET} Ver / Desbloquear IPs Registradas en Lista Negra"
-    echo -e "  ${C_WHITE}[4]${C_RESET} Activar / Desactivar Escudo Anti-Torrent (Kernel)"
-    echo -e "  ${C_WHITE}[5]${C_RESET} Verificar y Blindar Permisos de Archivos Sensibles"
+    echo -e "  ${C_WHITE}[1]${C_RESET} Activar Escudo Anti-Torrent / Bloqueo P2P"
+    echo -e "  ${C_WHITE}[2]${C_RESET} Desactivar Reglas Anti-Torrent"
+    echo -e "  ${C_WHITE}[3]${C_RESET} Liberar Memoria RAM en Caché y Depurar Logs Antiguos"
     echo -e "  ${C_GRAY}[0] Volver${C_RESET}"
-    read -r -p "  ► Opción: " op_sec
+    read -r -p "  ► Opción: " op_m
 
-    case "$op_sec" in
+    case "$op_m" in
         1)
-            echo -e "\n  ${C_CYAN}[*] Analizando registros de autenticación en busca de ataques...${C_RESET}"
-            local log_src=""
-            [ -f /var/log/auth.log ] && log_src="/var/log/auth.log"
-            [ -z "$log_src" ] && [ -f /var/log/secure ] && log_src="/var/log/secure"
-
-            if [ -n "$log_src" ]; then
-                grep -Ei "Failed password|Invalid user|bad password attempt" "$log_src" 2>/dev/null | \
-                 grep -oE '([0-9]{1,3}\.){3}[0-9]{1,3}' | \
-                 grep -vE '^(127\.|10\.|192\.168\.|172\.(1[6-9]|2[0-9]|3[0-1])\.)' | \
-                 sort | uniq -c | sort -nr | head -n 10 | \
-                 awk '{printf "  \033[1;31m%-8s intentos\033[0m │ IP: \033[1;37m%s\033[0m\n", $1, $2}'
-            else
-                journalctl -u ssh -u dropbear --no-pager -n 1000 2>/dev/null | \
-                 grep -Ei "Failed password|Invalid user|bad password" | \
-                 grep -oE '([0-9]{1,3}\.){3}[0-9]{1,3}' | grep -v '^127\.' | \
-                 sort | uniq -c | sort -nr | head -n 10 | \
-                 awk '{printf "  \033[1;31m%-8s intentos\033[0m │ IP: \033[1;37m%s\033[0m\n", $1, $2}'
-            fi
+            for cadena in FORWARD OUTPUT; do
+                for firma in "BitTorrent" "BitTorrent protocol" "peer_id=" ".torrent" "announce.php?passkey=" "info_hash" "get_peers" "find_node"; do
+                    iptables -C "$cadena" -m string --string "$firma" --algo bm -j DROP 2>/dev/null || \
+                    iptables -A "$cadena" -m string --string "$firma" --algo bm -j DROP 2>/dev/null
+                done
+            done
+            registrar_accion_admin "ESCUDO_ANTITORRENT" "Estado=ACTIVADO"
+            echo -e "\n  ${C_GREEN}[✓] Escudo Anti-Torrent activado en el firewall del Kernel.${C_RESET}"
             ;;
         2)
-            echo -e "  ${C_YELLOW}[!] Bloqueo de IP deshabilitado: no se tocará el firewall ni se arriesgará tu acceso.${C_RESET}"
+            for cadena in FORWARD OUTPUT; do
+                for firma in "BitTorrent" "BitTorrent protocol" "peer_id=" ".torrent" "announce.php?passkey=" "info_hash" "get_peers" "find_node"; do
+                    while iptables -D "$cadena" -m string --string "$firma" --algo bm -j DROP 2>/dev/null; do :; done
+                done
+            done
+            registrar_accion_admin "ESCUDO_ANTITORRENT" "Estado=DESACTIVADO"
+            echo -e "\n  ${C_YELLOW}[!] Reglas Anti-Torrent desactivadas.${C_RESET}"
             ;;
         3)
-            echo -e "  ${C_YELLOW}[!] Gestión de bloqueos IP deshabilitada en modo protegido; no se modificará el firewall.${C_RESET}"
-            ;;
-        4)
-            echo -e "  ${C_YELLOW}[!] Reglas anti-torrent deshabilitadas: no se modificarán reglas iptables.${C_RESET}"
-            ;;
-        5)
-            chmod 600 "$DB_LIMITS" "$BLOCKED_USERS_DB" "$BLOCKED_IPS_DB" "$WHITELIST_IPS_DB" "$LOCKS_LOG" "$AUDIT_LOG" "$SECURITY_LOG" 2>/dev/null
-            chmod 700 "$CONF_DIR" "$LOG_DIR" "$BACKUP_DIR" 2>/dev/null
-            chmod 755 "$BIN_TARGET" 2>/dev/null
-            echo -e "\n  ${C_GREEN}[✓] Permisos estrictos (600/700) aplicados a bases de datos, backups y logs.${C_RESET}"
+            echo -e "\n  ${C_CYAN}[*] Purgando logs antiguos y liberando caché de RAM (Sin tocar conexiones)...${C_RESET}"
+            journalctl --vacuum-size=20M &>/dev/null
+            sync
+            echo 3 > /proc/sys/vm/drop_caches 2>/dev/null
+            echo -e "  ${C_GREEN}[✓] Memoria caché liberada y registros depurados.${C_RESET}"
             ;;
         *) return ;;
     esac
     read -r -p "  Presiona Enter para volver..."
 }
 
-escudo_y_mantenimiento_vps() {
-    echo -e "  ${C_YELLOW}[!] No se alteran reglas iptables, caché del kernel ni servicios externos desde el panel protegido. El servidor permanece sin cambios.${C_RESET}"
-    return 1
-}
+# ==============================================================================
+# CATEGORÍA 3: INFRAESTRUCTURA Y DIAGNÓSTICO DEL VPS
+# ==============================================================================
 
 estado_servicios_diferenciado() {
     mostrar_pantalla_encabezado
@@ -1670,123 +1679,1057 @@ informacion_ficha_vps() {
 }
 
 # ==============================================================================
-# CATEGORÍA 4: HERRAMIENTAS, BACKUPS, REPARACIÓN Y ACTUALIZACIÓN GITHUB
+# CATEGORÍA 4: HERRAMIENTAS, REPARACIÓN Y ACTUALIZACIÓN GITHUB
 # ==============================================================================
 
 # Crea copia de seguridad con fecha y tipo sin sobrescribir copias previas
-crear_respaldo_sistema() {
-    local tipo="${1:-manual}"
-    mkdir -p "$BACKUP_DIR"
-    chmod 700 "$BACKUP_DIR"
-
-    local stamp archivo_destino
-    stamp=$(date "+%Y%m%d-%H%M%S")
-    archivo_destino="${BACKUP_DIR}/backup-blue-${stamp}-${tipo}.tar.gz"
-    if [ -f "$archivo_destino" ]; then
-        archivo_destino="${BACKUP_DIR}/backup-blue-${stamp}-${RANDOM}-${tipo}.tar.gz"
-    fi
-
-    # Empaquetar base de datos de usuarios, configuraciones de bluecompany y binario actual
-    # NUNCA incluye claves privadas SSH del host (/etc/ssh/ssh_host_* ni /root/.ssh)
-    if ! tar -czf "$archivo_destino" \
-        "$DB_LIMITS" \
-        "$CONF_DIR" \
-        "$BIN_TARGET" 2>/dev/null || ! tar -tzf "$archivo_destino" >/dev/null 2>&1; then
-        rm -f "$archivo_destino"
-        echo "ERROR: no se pudo crear/verificar el respaldo" >&2
-        return 1
-    fi
-
-    chmod 600 "$archivo_destino" 2>/dev/null
-    # No se escribe una copia espejo con nombre fijo: evita sobrescribir respaldos previos.
-    registrar_accion_admin "CREAR_BACKUP" "Tipo=${tipo} Archivo=$(basename "$archivo_destino")"
-    echo "$archivo_destino"
-}
-
-menu_copias_seguridad() {
-    mostrar_pantalla_encabezado
-    echo -e "${C_NEON}┌───────── GESTIÓN DE COPIAS DE SEGURIDAD ─────────────┐${C_RESET}"
-    echo -e "  ${C_CYAN}Respaldos almacenados en ${BACKUP_DIR}:${C_RESET}"
-    echo -e "${C_BLUE}────────────────────────────────────────────────────────${C_RESET}"
-
-    local count=0
-    if compgen -G "${BACKUP_DIR}/backup-blue-*.tar.gz" > /dev/null; then
-        printf "${C_BOLD}${C_CYAN} %-4s %-34s %-10s %-16s${C_RESET}\n" "N°" "ARCHIVO" "TAMAÑO" "FECHA"
-        while IFS= read -r f; do
-            count=$(( count + 1 ))
-            local sz dt bn
-            bn=$(basename "$f")
-            sz=$(du -h "$f" 2>/dev/null | awk '{print $1}')
-            dt=$(date -r "$f" "+%Y-%m-%d %H:%M" 2>/dev/null)
-            printf " ${C_YELLOW}[%02d]${C_RESET} %-34.34s ${C_GREEN}%-10s${C_RESET} %-16s\n" "$count" "$bn" "$sz" "$dt"
-        done < <(ls -1t "${BACKUP_DIR}"/backup-blue-*.tar.gz 2>/dev/null | head -n 15)
-    else
-        echo -e "  ${C_YELLOW}No hay respaldos históricos en ${BACKUP_DIR}.${C_RESET}"
-    fi
-
-    echo -e "${C_BLUE}────────────────────────────────────────────────────────${C_RESET}"
-    echo -e "  ${C_WHITE}[1]${C_RESET} Crear Nueva Copia de Seguridad Manual Ahora"
-    echo -e "  ${C_WHITE}[2]${C_RESET} Ir a Restauración de Respaldos"
-    echo -e "  ${C_GRAY}[0] Volver${C_RESET}"
-    read -r -p "  ► Opción: " op_b
-
-    case "$op_b" in
-        1)
-            local nuevo_bk sz_bk
-            nuevo_bk=$(crear_respaldo_sistema "manual")
-            sz_bk=$(du -h "$nuevo_bk" 2>/dev/null | awk '{print $1}')
-            echo -e "\n  ${C_GREEN}[✓] Copia de seguridad creada exitosamente:${C_RESET}"
-            echo -e "  ${C_WHITE}Archivo:${C_RESET} $nuevo_bk ($sz_bk)"
-            read -r -p "  Presiona Enter para volver..."
-            ;;
-        2) menu_restaurar_respaldo ;;
-        *) return ;;
-    esac
-}
-
-menu_restaurar_respaldo() {
-    echo -e "  ${C_YELLOW}[!] La restauración queda bloqueada hasta implementar validación criptográfica y simulación previa. El servidor permanece sin cambios.${C_RESET}"
-    return 1
-}
-
+# Sistema de actualización GitHub: valida VERSION, contenido y sintaxis antes de instalar.
 actualizar_desde_github() {
-    echo -e "  ${C_YELLOW}[!] La actualización remota queda bloqueada: el repositorio no ofrece firma/checksum verificado en este flujo. El servidor permanece sin cambios.${C_RESET}"
-    return 1
+    mostrar_pantalla_encabezado
+    echo -e "${C_NEON}┌──────── ACTUALIZADOR INTEGRADO DESDE GITHUB ────────┐${C_RESET}"
+    exec 7>"$UPDATE_LOCK"
+    if ! flock -n 7; then
+        exec 7>&-
+        echo -e "  ${C_RED}[!] Ya hay una actualización en curso.${C_RESET}"
+        read -r -p "  Presiona Enter para volver..."
+        return
+    fi
+
+    local tmp_dir tmp_script remote_version script_version
+    tmp_dir=$(mktemp -d /tmp/bluecompany-update.XXXXXX) || {
+        flock -u 7 2>/dev/null; exec 7>&-
+        echo "No se pudo crear el directorio temporal."; return 1;
+    }
+    tmp_script="${tmp_dir}/BLUECOMPANY.sh"
+    if ! curl -fsSL --connect-timeout 8 --max-time 30 "$GITHUB_VERSION_URL" -o "${tmp_dir}/VERSION"; then
+        echo -e "${C_RED}[!] No se pudo descargar VERSION desde GitHub.${C_RESET}"
+        rm -rf "$tmp_dir"; flock -u 7; exec 7>&-; return 1
+    fi
+    remote_version=$(tr -d '[:space:]vV' < "${tmp_dir}/VERSION")
+    if [[ ! "$remote_version" =~ ^[0-9]+\.[0-9]+(\.[0-9]+)?$ ]]; then
+        echo -e "${C_RED}[!] El archivo VERSION remoto no contiene una versión válida.${C_RESET}"
+        rm -rf "$tmp_dir"; flock -u 7; exec 7>&-; return 1
+    fi
+    echo -e "  Instalada: ${C_GREEN}v${VERSION_SCRIPT}${C_RESET}"
+    echo -e "  GitHub:    ${C_YELLOW}v${remote_version}${C_RESET}"
+    if [ "$remote_version" = "$VERSION_SCRIPT" ]; then
+        read -r -p "  Ya está actualizada. ¿Deseas reinstalar esta misma versión? (s/n): " confirm
+    elif comparar_versiones_mayor "$remote_version" "$VERSION_SCRIPT"; then
+        read -r -p "  ¿Deseas instalar la versión ${remote_version}? (s/n): " confirm
+    else
+        echo -e "  ${C_YELLOW}[!] GitHub publica una versión anterior (${remote_version}). No se realizará una degradación automática.${C_RESET}"
+        rm -rf "$tmp_dir"
+        flock -u 7; exec 7>&-
+        return 0
+    fi
+    if [[ ! "$confirm" =~ ^[sS]$ ]]; then
+        rm -rf "$tmp_dir"; flock -u 7; exec 7>&-; echo "Actualización cancelada."; return 0
+    fi
+    if ! curl -fsSL --connect-timeout 8 --max-time 60 "$GITHUB_RAW_URL" -o "$tmp_script" || [ ! -s "$tmp_script" ]; then
+        echo -e "${C_RED}[!] Descarga vacía o fallida. No se instaló nada.${C_RESET}"
+        rm -rf "$tmp_dir"; flock -u 7; exec 7>&-; return 1
+    fi
+    if ! head -n 1 "$tmp_script" | grep -qx '#!/bin/bash' ||
+       ! grep -qF 'BLUE COMPANY' "$tmp_script" ||
+       ! grep -qE '^VERSION_SCRIPT="[0-9]+\.[0-9]+(\.[0-9]+)?"$' "$tmp_script" ||
+       ! bash -n "$tmp_script"; then
+        echo -e "${C_RED}[!] El script descargado no superó las validaciones. Instalación cancelada.${C_RESET}"
+        rm -rf "$tmp_dir"; flock -u 7; exec 7>&-; return 1
+    fi
+    script_version=$(sed -n 's/^VERSION_SCRIPT="\([^"]*\)".*/\1/p' "$tmp_script" | head -n 1)
+    if [ "$script_version" != "$remote_version" ]; then
+        echo -e "${C_RED}[!] VERSION y VERSION_SCRIPT no coinciden (${remote_version} vs ${script_version}).${C_RESET}"
+        rm -rf "$tmp_dir"; flock -u 7; exec 7>&-; return 1
+    fi
+    local staged="${BIN_TARGET}.new.$$"
+    if ! install -o root -g root -m 0755 "$tmp_script" "$staged" ||
+       ! bash -n "$staged" ||
+       ! mv -f "$staged" "$BIN_TARGET"; then
+        rm -f "$staged"
+        echo -e "${C_RED}[!] No se pudo validar o instalar el archivo. La versión remota no fue aplicada.${C_RESET}"
+        rm -rf "$tmp_dir"; flock -u 7; exec 7>&-; return 1
+    fi
+    ln -sfn "$BIN_TARGET" "$BIN_ALIAS"
+    echo "$remote_version" > "$VERSION_LOCAL_FILE"
+    chmod 600 "$VERSION_LOCAL_FILE" 2>/dev/null
+    registrar_accion_admin "ACTUALIZAR_GITHUB" "De=${VERSION_SCRIPT} A=${remote_version}"
+    rm -rf "$tmp_dir"
+    echo -e "${C_GREEN}[✓] Actualización instalada: v${remote_version}.${C_RESET}"
+    read -r -p "  Presiona Enter para recargar el panel..."
+    flock -u 7 2>/dev/null
+    exec 7>&-
+    flock -u 9 2>/dev/null
+    exec "$BIN_TARGET"
 }
 
+
+# Diagnóstico y Reparación Inteligente (Sin modificar servicios externos ni cortar conexiones activas)
 reparacion_inteligente_vps() {
-    echo -e "  ${C_YELLOW}[!] La reparación automática queda bloqueada para proteger servicios, puertos y reglas de red existentes. El servidor permanece sin cambios.${C_RESET}"
-    return 1
+    mostrar_pantalla_encabezado
+    echo -e "${C_NEON}┌───── DIAGNÓSTICO Y REPARACIÓN INTELIGENTE (SAFE) ────┐${C_RESET}"
+    echo -e "  ${C_CYAN}[*] Escaneando el sistema en modo lectura (Sin tocar conexiones)...${C_RESET}\n"
+
+    local problemas=()
+    local codigos=()
+
+    # 1. Comprobar servicios administrados detenidos
+    if ! pgrep -x "dropbear" &>/dev/null; then
+        problemas+=("El servicio Dropbear (Puerto 2222) está detenido.")
+        codigos+=("START_DROPBEAR")
+    fi
+    if ! systemctl is-active --quiet despachador 2>/dev/null && ! pgrep -f "despachador.py" &>/dev/null; then
+        problemas+=("El Despachador Multiplexor WS (Puerto 80) está detenido.")
+        codigos+=("START_DESPACHADOR")
+    fi
+    if ! pgrep -f "badvpn-udpgw" &>/dev/null; then
+        problemas+=("El servicio BadVPN UDPGW (Puerto 7300) está detenido.")
+        codigos+=("START_BADVPN")
+    fi
+    if ! systemctl is-active --quiet blue-limiter 2>/dev/null && ! pgrep -f "blue-limiter.py" &>/dev/null; then
+        problemas+=("El demonio Auto-Limitador 24/7 (blue-limiter) está detenido.")
+        codigos+=("START_LIMITER")
+    fi
+
+    # 2. Comprobar conflictos de puertos (ej. otro proceso ocupando P:80 cuando despachador no corre)
+    local proc_80
+    proc_80=$(ss -tlnp 2>/dev/null | awk '$4 ~ /:80$/ {print $6}')
+    if [ -n "$proc_80" ] && ! echo "$proc_80" | grep -q "python3"; then
+        problemas+=("Conflicto en puerto 80 detectado (Ocupado por: $proc_80).")
+        codigos+=("CONFLICTO_P80")
+    fi
+
+    # 3. Comprobar redirección iptables 8080/8880 -> 80
+    if ! iptables -t nat -C PREROUTING -p tcp -m multiport --dports 8080,8880 -j REDIRECT --to-ports 80 2>/dev/null; then
+        problemas+=("Falta regla NAT iptables para redirigir puertos 8080 y 8880 hacia el puerto 80.")
+        codigos+=("FIX_NAT_8080")
+    fi
+
+    # 4. Comprobar configuración de /etc/shells y permisos
+    if ! grep -qxF "/bin/false" /etc/shells 2>/dev/null || grep -qxF "/bin/expired" /etc/shells 2>/dev/null; then
+        problemas+=("Anomalía en /etc/shells (/bin/false ausente o /bin/expired presente).")
+        codigos+=("FIX_SHELLS")
+    fi
+
+    local perm_db
+    perm_db=$(stat -c "%a" "$DB_LIMITS" 2>/dev/null || echo "644")
+    if [ "$perm_db" != "600" ]; then
+        problemas+=("Permisos inseguros ($perm_db) en base de datos $DB_LIMITS (Recomendado: 600).")
+        codigos+=("FIX_PERMS")
+    fi
+
+    if [ "${#problemas[@]}" -eq 0 ]; then
+        echo -e "  ${C_GREEN}[✓] ¡Diagnóstico completado! No se detectaron fallos, conflictos ni errores de configuración.${C_RESET}"
+        echo -e "  ${C_GRAY}Todos los servicios administrados y reglas de red operan correctamente.${C_RESET}"
+        read -r -p "  Presiona Enter para volver..."
+        return
+    fi
+
+    echo -e "  ${C_YELLOW}Se detectaron ${#problemas[@]} anomalías en el servidor:${C_RESET}"
+    local i=0
+    for p in "${problemas[@]}"; do
+        i=$(( i + 1 ))
+        echo -e "   ${C_RED}[$i]${C_RESET} $p"
+    done
+
+    echo -e "${C_BLUE}────────────────────────────────────────────────────────${C_RESET}"
+    echo -e "  ${C_CYAN}Reparación propuesta:${C_RESET} Corregir únicamente los componentes afectados sin"
+    echo -e "  reiniciar servicios activos ni desconectar a los clientes conectados."
+    read -r -p "  ¿Confirmas aplicar las reparaciones propuestas ahora? (s/n): " conf_fix
+
+    if [[ ! "$conf_fix" =~ ^[sS]$ ]]; then
+        echo -e "\n  ${C_YELLOW}[!] Reparación cancelada. No se realizaron modificaciones.${C_RESET}"
+        read -r -p "  Presiona Enter para volver..."
+        return
+    fi
+
+    for cod in "${codigos[@]}"; do
+        case "$cod" in
+            START_DROPBEAR)
+                if [ -f /etc/systemd/system/dropbear.service ]; then
+                    systemctl start dropbear 2>/dev/null
+                else
+                    instalar_dropbear_auto "1"
+                fi
+                echo -e "  ${C_GREEN}[✓] Servicio Dropbear (2222) iniciado.${C_RESET}"
+                ;;
+            START_DESPACHADOR)
+                if [ -f /etc/systemd/system/despachador.service ]; then
+                    systemctl start despachador 2>/dev/null
+                else
+                    instalar_despachador_auto "1"
+                fi
+                echo -e "  ${C_GREEN}[✓] Servicio Despachador WS (80) iniciado.${C_RESET}"
+                ;;
+            START_BADVPN)
+                if [ -f /etc/systemd/system/badvpn.service ]; then
+                    systemctl start badvpn 2>/dev/null
+                else
+                    instalar_badvpn_auto "1"
+                fi
+                echo -e "  ${C_GREEN}[✓] Servicio BadVPN (7300) iniciado.${C_RESET}"
+                ;;
+            START_LIMITER)
+                instalar_limitador_auto "1"
+                echo -e "  ${C_GREEN}[✓] Demonio Auto-Limitador 24/7 iniciado.${C_RESET}"
+                ;;
+            CONFLICTO_P80)
+                echo -e "  ${C_YELLOW}[!] Nota: El puerto 80 está en uso por un servicio externo ($proc_80).${C_RESET}"
+                echo -e "  ${C_GRAY}Por seguridad corporativa no se mató el proceso externo automáticamente.${C_RESET}"
+                ;;
+            FIX_NAT_8080)
+                iptables -t nat -A PREROUTING -p tcp -m multiport --dports 8080,8880 -j REDIRECT --to-ports 80 2>/dev/null
+                echo -e "  ${C_GREEN}[✓] Regla NAT PREROUTING (8080,8880 -> 80) restaurada.${C_RESET}"
+                ;;
+            FIX_SHELLS)
+                for sh_path in "/bin/false" "/usr/sbin/nologin"; do
+                    [ -f "$sh_path" ] && ! grep -qxF "$sh_path" /etc/shells 2>/dev/null && echo "$sh_path" >> /etc/shells
+                done
+                sed -i '\|/bin/expired|d' /etc/shells 2>/dev/null
+                echo -e "  ${C_GREEN}[✓] Archivo /etc/shells corregido.${C_RESET}"
+                ;;
+            FIX_PERMS)
+                chmod 600 "$DB_LIMITS" "$BLOCKED_USERS_DB" "$LOCKS_LOG" "$AUDIT_LOG" 2>/dev/null
+                echo -e "  ${C_GREEN}[✓] Permisos 600 restaurados en archivos sensibles.${C_RESET}"
+                ;;
+        esac
+    done
+
+    registrar_accion_admin "REPARACION_INTELIGENTE" "ItemsReparados=${#codigos[@]}"
+    read -r -p "  Presiona Enter para volver..."
 }
+
+# ==============================================================================
+# INSTALADORES DE COMPONENTES DE INFRAESTRUCTURA (CONSERVADOS Y PROTEGIDOS)
+# ==============================================================================
 
 instalar_dropbear_auto() {
-    echo -e "  ${C_YELLOW}[!] No se instala ni reinicia Dropbear desde el panel protegido. El servidor permanece sin cambios.${C_RESET}"
-    return 1
+    local silencioso="$1"
+    if [ "$silencioso" != "1" ]; then
+        mostrar_pantalla_encabezado
+        echo -e "${C_NEON}┌────── INSTALADOR CORPORATIVO DROPBEAR (2222) ────────┐${C_RESET}"
+        if pgrep -x "dropbear" &>/dev/null; then
+            echo -e "  ${C_YELLOW}[!] Dropbear ya está activo en el puerto 2222.${C_RESET}"
+            read -r -p "  ¿Deseas reinstalar/reiniciar Dropbear? (Cortará sesiones activas en 2222) (s/n): " c_db
+            [[ ! "$c_db" =~ ^[sS]$ ]] && return
+        fi
+    fi
+
+    echo -e "  ${C_CYAN}[*] Configurando entorno Dropbear en puerto 2222...${C_RESET}"
+    export DEBIAN_FRONTEND=noninteractive
+
+    if ! command -v dropbear &>/dev/null || ! command -v dropbearkey &>/dev/null; then
+        dpkg --configure -a &>/dev/null
+        apt-get update -y &>/dev/null
+        apt-get install -y dropbear-bin psmisc &>/dev/null
+    fi
+
+    mkdir -p /etc/dropbear
+
+    cat << 'DBCONF' > /etc/default/dropbear
+NO_START=0
+DROPBEAR_PORT=2222
+DROPBEAR_EXTRA_ARGS="-W 65536 -K 15 -I 60"
+DROPBEAR_BANNER=""
+DROPBEAR_RECEIVE_WINDOW=65536
+DBCONF
+
+    for sh_path in "/bin/false" "/usr/sbin/nologin"; do
+        if ! grep -qxF "$sh_path" /etc/shells 2>/dev/null; then
+            echo "$sh_path" >> /etc/shells
+        fi
+    done
+    sed -i '\|/bin/expired|d' /etc/shells 2>/dev/null
+
+    for k in /etc/dropbear/dropbear_*_host_key; do
+        [ -f "$k" ] && [ ! -s "$k" ] && rm -f "$k"
+    done
+
+    [ ! -s /etc/dropbear/dropbear_rsa_host_key ] && dropbearkey -t rsa -f /etc/dropbear/dropbear_rsa_host_key &>/dev/null
+    [ ! -s /etc/dropbear/dropbear_ecdsa_host_key ] && dropbearkey -t ecdsa -f /etc/dropbear/dropbear_ecdsa_host_key &>/dev/null
+    [ ! -s /etc/dropbear/dropbear_ed25519_host_key ] && dropbearkey -t ed25519 -f /etc/dropbear/dropbear_ed25519_host_key &>/dev/null
+
+    [ -f /etc/init.d/dropbear ] && chmod -x /etc/init.d/dropbear 2>/dev/null
+    local DROPBEAR_BIN
+    DROPBEAR_BIN=$(command -v dropbear || echo "/usr/sbin/dropbear")
+
+    cat << DBSRV > /etc/systemd/system/dropbear.service
+[Unit]
+Description=Dropbear SSH Server (Puerto 2222 - BLUE COMPANY)
+After=network.target
+
+[Service]
+Type=simple
+ExecStart=${DROPBEAR_BIN} -EF -R -p 2222 -W 65536 -K 15 -I 60
+KillMode=process
+Restart=always
+RestartSec=1
+LimitNOFILE=65535
+
+[Install]
+WantedBy=multi-user.target
+DBSRV
+
+    systemctl daemon-reload
+    systemctl enable dropbear &>/dev/null
+    if ! pgrep -x "dropbear" &>/dev/null; then
+        systemctl start dropbear &>/dev/null
+    else
+        systemctl restart dropbear &>/dev/null
+    fi
+    sleep 0.5
+
+    if pgrep -x "dropbear" &>/dev/null; then
+        echo -e "  ${C_GREEN}[✓] Dropbear 2222 activo (Handshake ligero y KillMode=process).${C_RESET}"
+    else
+        echo -e "  ${C_RED}[!] Error al iniciar Dropbear en puerto 2222.${C_RESET}"
+    fi
+
+    if [ "$silencioso" != "1" ]; then
+        read -r -p "  Presiona Enter para volver al panel..."
+    fi
 }
 
 instalar_despachador_auto() {
-    echo -e "  ${C_YELLOW}[!] No se modifica el despachador ni sus puertos desde el panel protegido. El servidor permanece sin cambios.${C_RESET}"
-    return 1
+    local silencioso="$1"
+    if [ "$silencioso" != "1" ]; then
+        mostrar_pantalla_encabezado
+        echo -e "${C_NEON}┌───── INSTALADOR DESPACHADOR MULTIPLEXOR (80) ────────┐${C_RESET}"
+        if systemctl is-active --quiet despachador 2>/dev/null; then
+            echo -e "  ${C_YELLOW}[!] El Despachador WS ya se encuentra activo en el puerto 80.${C_RESET}"
+            read -r -p "  ¿Confirmas reiniciar/reinstalar el Despachador WS? (s/n): " c_ws
+            [[ ! "$c_ws" =~ ^[sS]$ ]] && return
+        fi
+    fi
+
+    export DEBIAN_FRONTEND=noninteractive
+    for dep_bin in python3 fuser iptables; do
+        if ! command -v "$dep_bin" &>/dev/null; then
+            apt-get update -y &>/dev/null
+            apt-get install -y python3 psmisc iptables &>/dev/null
+            break
+        fi
+    done
+
+    cat << 'PY_EOF' > /usr/local/bin/despachador.py
+#!/usr/bin/env python3
+import socket
+import select
+import threading
+import random
+
+LISTEN_HOST = "0.0.0.0"
+LISTEN_PORT = 80
+SSH_PORT = 2222
+PORT_WS = 20001
+PORT_UPGRADE = 20002
+PORT_XHTTP = 20003
+BUF_SIZE = 32768
+
+def optimizar_socket(sock, timeout=None):
+    try:
+        sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
+        sock.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, 1)
+        if timeout is not None:
+            sock.settimeout(timeout)
+    except Exception:
+        pass
+
+def conectar_dropbear_aislado():
+    ssh = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    optimizar_socket(ssh, timeout=10)
+    try:
+        ip_local = f"127.{random.randint(0, 254)}.{random.randint(0, 254)}.{random.randint(2, 254)}"
+        ssh.bind((ip_local, 0))
+    except Exception:
+        pass
+    ssh.connect(("127.0.0.1", SSH_PORT))
+    ssh.settimeout(None)
+    return ssh
+
+def cerrar_par(s1, s2):
+    for s in (s1, s2):
+        if s is None:
+            continue
+        try:
+            s.shutdown(socket.SHUT_RDWR)
+        except Exception:
+            pass
+        try:
+            s.close()
+        except Exception:
+            pass
+
+def pipe_directo(src, dst):
+    try:
+        while True:
+            data = src.recv(BUF_SIZE)
+            if not data:
+                break
+            dst.sendall(data)
+    except Exception:
+        pass
+    finally:
+        cerrar_par(src, dst)
+
+def pipe_cliente_a_ssh(client, ssh, ssh_iniciado=False):
+    acumulado = b""
+    try:
+        if not ssh_iniciado:
+            client.settimeout(12)
+        while True:
+            data = client.recv(BUF_SIZE)
+            if not data:
+                break
+            if ssh_iniciado:
+                ssh.sendall(data)
+            else:
+                acumulado += data
+                if b"SSH-2.0-" in acumulado:
+                    idx = acumulado.find(b"SSH-2.0-")
+                    ssh_iniciado = True
+                    client.settimeout(None)
+                    ssh.sendall(acumulado[idx:])
+                    acumulado = b""
+                elif len(acumulado) > 65536:
+                    acumulado = b""
+    except Exception:
+        pass
+    finally:
+        cerrar_par(client, ssh)
+
+def extraer_ruta_http(buffer):
+    try:
+        primera_linea = buffer.split(b"\r\n", 1)[0].decode("latin1", errors="ignore")
+        partes = primera_linea.split(" ")
+        if len(partes) >= 2:
+            return partes[1].lower()
+    except Exception:
+        pass
+    return ""
+
+def procesar_conexion(client, addr):
+    ssh = None
+    try:
+        optimizar_socket(client, timeout=12)
+        buffer = client.recv(BUF_SIZE)
+        if not buffer:
+            client.close()
+            return
+
+        if buffer.startswith(b"SSH-"):
+            ssh = conectar_dropbear_aislado()
+            client.settimeout(None)
+            ssh.sendall(buffer)
+            t = threading.Thread(target=pipe_cliente_a_ssh, args=(client, ssh, True), daemon=True)
+            t.start()
+            pipe_directo(ssh, client)
+            return
+
+        ruta = extraer_ruta_http(buffer)
+        target_port = None
+        if ruta.startswith("/ws"):
+            target_port = PORT_WS
+        elif ruta.startswith("/upgrade"):
+            target_port = PORT_UPGRADE
+        elif ruta.startswith("/xhttp"):
+            target_port = PORT_XHTTP
+
+        if target_port:
+            try:
+                remote = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                optimizar_socket(remote, timeout=4)
+                remote.connect(("127.0.0.1", target_port))
+                remote.settimeout(None)
+                client.settimeout(None)
+                remote.sendall(buffer)
+                t = threading.Thread(target=pipe_directo, args=(client, remote), daemon=True)
+                t.start()
+                pipe_directo(remote, client)
+                return
+            except Exception:
+                try:
+                    remote.close()
+                except Exception:
+                    pass
+
+        for _ in range(5):
+            if b"SSH-2.0-" in buffer:
+                break
+            espera = 0.08 if buffer.endswith(b"\r\n\r\n") else 0.45
+            rlist, _, _ = select.select([client], [], [], espera)
+            if not rlist:
+                break
+            extra = client.recv(BUF_SIZE)
+            if not extra:
+                break
+            buffer += extra
+
+        client.sendall(
+            b"HTTP/1.1 101 Switching Protocols\r\n"
+            b"Upgrade: websocket\r\n"
+            b"Connection: Upgrade\r\n\r\n"
+        )
+
+        ssh = conectar_dropbear_aislado()
+        ya_inicio_ssh = False
+
+        if b"SSH-2.0-" in buffer:
+            idx = buffer.find(b"SSH-2.0-")
+            ya_inicio_ssh = True
+            client.settimeout(None)
+            ssh.sendall(buffer[idx:])
+
+        t = threading.Thread(target=pipe_cliente_a_ssh, args=(client, ssh, ya_inicio_ssh), daemon=True)
+        t.start()
+        pipe_directo(ssh, client)
+
+    except Exception:
+        cerrar_par(client, ssh)
+
+def main():
+    server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    optimizar_socket(server)
+    server.bind((LISTEN_HOST, LISTEN_PORT))
+    server.listen(4096)
+    while True:
+        try:
+            client, addr = server.accept()
+            hilo = threading.Thread(target=procesar_conexion, args=(client, addr), daemon=True)
+            hilo.start()
+        except Exception:
+            pass
+
+if __name__ == "__main__":
+    main()
+PY_EOF
+    chmod +x /usr/local/bin/despachador.py
+
+    cat << 'SRV_EOF' > /etc/systemd/system/despachador.service
+[Unit]
+Description=Despachador Multiplexor Puerto 80/8080/8880 (BLUE COMPANY)
+After=network.target
+
+[Service]
+Type=simple
+User=root
+Environment="PYTHONUNBUFFERED=1"
+ExecStartPre=-/bin/sh -c 'iptables -t nat -C PREROUTING -p tcp -m multiport --dports 8080,8880 -j REDIRECT --to-ports 80 2>/dev/null || iptables -t nat -A PREROUTING -p tcp -m multiport --dports 8080,8880 -j REDIRECT --to-ports 80 2>/dev/null'
+ExecStart=/usr/bin/python3 /usr/local/bin/despachador.py
+Restart=always
+RestartSec=1
+LimitNOFILE=65535
+
+[Install]
+WantedBy=multi-user.target
+SRV_EOF
+
+    systemctl daemon-reload
+    systemctl enable despachador &>/dev/null
+    if ! systemctl is-active --quiet despachador; then
+        systemctl start despachador &>/dev/null
+    else
+        systemctl restart despachador &>/dev/null
+    fi
+    sleep 0.5
+
+    if systemctl is-active --quiet despachador; then
+        echo -e "  ${C_GREEN}[✓] Despachador WS activo en puertos 80, 8080 y 8880 (Xray /ws, /upgrade, /xhttp respetados).${C_RESET}"
+    else
+        echo -e "  ${C_RED}[!] Error al iniciar puerto 80. Verifica posibles conflictos en Diagnóstico.${C_RESET}"
+    fi
+
+    if [ "$silencioso" != "1" ]; then
+        read -r -p "  Presiona Enter para volver al panel..."
+    fi
 }
 
 instalar_limitador_auto() {
-    echo -e "  ${C_YELLOW}[!] No se crean ni reinician servicios systemd desde el panel protegido. El servidor permanece sin cambios.${C_RESET}"
-    return 1
+    local silencioso="$1"
+    if [ "$silencioso" != "1" ]; then
+        mostrar_pantalla_encabezado
+        echo -e "${C_NEON}┌─── DEMONIO AUTO-LIMITADOR INTELIGENTE 24/7 (v9.1) ───┐${C_RESET}"
+    fi
+
+    cat << 'LIM_EOF' > /usr/local/bin/blue-limiter.py
+#!/usr/bin/env python3
+import os
+import re
+import time
+import fcntl
+import signal
+import subprocess
+from datetime import datetime
+
+DB_LIMITS = "/etc/ssh-limits.txt"
+CACHE_FILE = "/run/blue-dropbear.map"
+LOCK_FILE = "/run/blue-limiter-daemon.lock"
+LOCKS_LOG = "/var/log/bluecompany/locks.log"
+BLOCKED_USERS_DB = "/etc/bluecompany/blocked_users.db"
+
+pid_memory = {}
+
+def registrar_evento_bloqueo(u, motivo):
+    os.makedirs("/var/log/bluecompany", exist_ok=True)
+    os.makedirs("/etc/bluecompany", exist_ok=True)
+    ahora_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    try:
+        with open(LOCKS_LOG, "a") as lf:
+            lf.write(f"{ahora_str}|{u}|{motivo}\n")
+    except Exception:
+        pass
+    try:
+        lineas = []
+        if os.path.exists(BLOCKED_USERS_DB):
+            with open(BLOCKED_USERS_DB, "r", errors="ignore") as bf:
+                lineas = [l for l in bf if not l.startswith(f"{u}|")]
+        lineas.append(f"{u}|{ahora_str}|{motivo}\n")
+        with open(BLOCKED_USERS_DB, "w") as bf:
+            bf.writelines(lineas)
+    except Exception:
+        pass
+
+def leer_base_usuarios():
+    usuarios = {}
+    if not os.path.exists(DB_LIMITS):
+        return usuarios
+    try:
+        with open(DB_LIMITS, "r", errors="ignore") as f:
+            for line in f:
+                line = line.strip()
+                if not line or line.startswith("#") or ":" not in line:
+                    continue
+                parts = line.split(":")
+                u = parts[0].strip()
+                if not u:
+                    continue
+                try:
+                    lim = int(parts[1])
+                    if lim <= 0:
+                        lim = 1
+                except Exception:
+                    lim = 1
+                exp_epoch = 0
+                if len(parts) >= 4 and parts[3].strip().isdigit():
+                    exp_epoch = int(parts[3].strip())
+                est_manual = "ACTIVO"
+                if len(parts) >= 5 and parts[4].strip():
+                    est_manual = parts[4].strip()
+                usuarios[u] = (lim, exp_epoch, est_manual)
+    except Exception:
+        pass
+    return usuarios
+
+def obtener_shells_y_shadow():
+    shells = {}
+    shadow_exp = {}
+    shadow_locked = {}
+    try:
+        with open("/etc/passwd", "r", errors="ignore") as pf:
+            for line in pf:
+                p = line.strip().split(":")
+                if len(p) >= 7:
+                    shells[p[0]] = p[6]
+    except Exception:
+        pass
+    try:
+        with open("/etc/shadow", "r", errors="ignore") as sf:
+            for line in sf:
+                p = line.strip().split(":")
+                if len(p) >= 8:
+                    usr = p[0]
+                    pwd = p[1]
+                    shadow_locked[usr] = pwd.startswith("!") or pwd.startswith("*")
+                    if p[7].strip().isdigit():
+                        shadow_exp[usr] = int(p[7].strip())
+    except Exception:
+        pass
+    return shells, shadow_exp, shadow_locked
+
+def obtener_procesos():
+    dropbear_pids = {}
+    sshd_por_usuario = {}
+    uid_map = {}
+
+    try:
+        with open("/etc/passwd", "r", errors="ignore") as pf:
+            for line in pf:
+                p = line.strip().split(":")
+                if len(p) >= 3:
+                    uid_map[p[2]] = p[0]
+    except Exception:
+        pass
+
+    for entry in os.listdir("/proc"):
+        if not entry.isdigit():
+            continue
+        try:
+            with open(f"/proc/{entry}/comm", "r") as f:
+                comm = f.read().strip().lower()
+            with open(f"/proc/{entry}/stat", "r") as f:
+                stat_after = f.read().rsplit(")", 1)[-1].split()
+                ppid = int(stat_after[1])
+                starttime = int(stat_after[19])
+
+            if "dropbear" in comm and ppid > 1:
+                dropbear_pids[entry] = starttime
+            elif comm.startswith("sshd") and ppid > 1:
+                usr_detectado = None
+                with open(f"/proc/{entry}/status", "r") as sf:
+                    for sline in sf:
+                        if sline.startswith("Uid:"):
+                            real_uid = sline.split()[1]
+                            if real_uid != "0" and real_uid in uid_map:
+                                usr_detectado = uid_map[real_uid]
+                            break
+                if not usr_detectado:
+                    with open(f"/proc/{entry}/cmdline", "rb") as cf:
+                        cmd = cf.read().replace(b"\x00", b" ").decode("latin1", errors="ignore")
+                        m = re.search(r"sshd(?:-session)?:\s+([a-zA-Z0-9_-]+)(?:@|\[notty\]|$)", cmd)
+                        if m and m.group(1) != "root":
+                            usr_detectado = m.group(1)
+                if usr_detectado:
+                    sshd_por_usuario.setdefault(usr_detectado, []).append((starttime, int(entry)))
+        except Exception:
+            continue
+
+    return dropbear_pids, sshd_por_usuario
+
+def actualizar_mapa_dropbear(dropbear_pids, users):
+    global pid_memory
+    activos = {(pid, st) for pid, st in dropbear_pids.items()}
+    pid_memory = {k: v for k, v in pid_memory.items() if k in activos}
+
+    faltantes = [pid for pid, st in dropbear_pids.items() if (pid, st) not in pid_memory]
+    if faltantes:
+        log_text = ""
+        for lf in ["/var/log/auth.log", "/var/log/syslog", "/var/log/secure"]:
+            if os.path.exists(lf):
+                try:
+                    with open(lf, "r", errors="ignore") as f:
+                        f.seek(0, os.SEEK_END)
+                        sz = f.tell()
+                        f.seek(max(0, sz - 200000))
+                        log_text += f.read() + "\n"
+                except Exception:
+                    pass
+        try:
+            j_out = subprocess.check_output(
+                ["journalctl", "-u", "dropbear", "--no-pager", "-n", "600"],
+                stderr=subprocess.DEVNULL
+            ).decode(errors="ignore")
+            log_text += j_out
+        except Exception:
+            pass
+
+        pat = re.compile(r"dropbear\[(\d+)\]:.*succeeded for ['\"]?([^'\"\s]+)['\"]?", re.IGNORECASE)
+        for m in pat.finditer(log_text):
+            p, usr = m.group(1), m.group(2)
+            if p in dropbear_pids:
+                pid_memory[(p, dropbear_pids[p])] = usr
+
+        users_sorted = sorted(users, key=len, reverse=True)
+        for pid in faltantes:
+            st = dropbear_pids.get(pid)
+            if (pid, st) in pid_memory:
+                continue
+            try:
+                with open(f"/proc/{pid}/maps", "r") as mf, open(f"/proc/{pid}/mem", "rb", 0) as mem:
+                    for line in mf:
+                        if "rw-p" not in line:
+                            continue
+                        parts = line.split()[0].split("-")
+                        start, end = int(parts[0], 16), int(parts[1], 16)
+                        if end - start > 8 * 1024 * 1024:
+                            continue
+                        mem.seek(start)
+                        chunk = mem.read(end - start)
+                        for u in users_sorted:
+                            ub = re.escape(u.encode())
+                            if re.search(rb"/home/" + ub + rb"\x00(?!/)", chunk) or (b"succeeded for '" + u.encode() + b"'" in chunk):
+                                pid_memory[(pid, st)] = u
+                                break
+                        if (pid, st) in pid_memory:
+                            break
+            except Exception:
+                pass
+
+    try:
+        with open(CACHE_FILE + ".tmp", "w") as cf:
+            for (pid, _), usr in pid_memory.items():
+                cf.write(f"{pid}:{usr}\n")
+        os.replace(CACHE_FILE + ".tmp", CACHE_FILE)
+    except Exception:
+        pass
+
+    db_por_usuario = {}
+    for (pid, st), usr in pid_memory.items():
+        db_por_usuario.setdefault(usr, []).append((st, int(pid)))
+    return db_por_usuario
+
+def bloquear_usuario_individual(u, sesiones, motivo):
+    for _, pid in sesiones:
+        try:
+            if pid > 1:
+                os.kill(pid, signal.SIGKILL)
+        except Exception:
+            pass
+    subprocess.run(["pkill", "-KILL", "-u", u], stderr=subprocess.DEVNULL, stdout=subprocess.DEVNULL)
+    subprocess.run(["usermod", "-L", "-s", "/bin/expired", "-e", "1970-01-02", u], stderr=subprocess.DEVNULL, stdout=subprocess.DEVNULL)
+    subprocess.run(["passwd", "-l", u], stderr=subprocess.DEVNULL, stdout=subprocess.DEVNULL)
+    registrar_evento_bloqueo(u, motivo)
+
+def ciclo_control():
+    usuarios = leer_base_usuarios()
+    if not usuarios:
+        return
+
+    shells, shadow_exp, shadow_locked = obtener_shells_y_shadow()
+    dropbear_pids, sshd_por_usuario = obtener_procesos()
+    db_por_usuario = actualizar_mapa_dropbear(dropbear_pids, list(usuarios.keys()))
+
+    ahora = int(time.time())
+    hoy_dias = ahora // 86400
+
+    for u, (lim, exp_epoch, est_manual) in usuarios.items():
+        if u not in shells or u == "root":
+            continue
+
+        sesiones = sshd_por_usuario.get(u, []) + db_por_usuario.get(u, [])
+        bloqueado = False
+        motivo = ""
+
+        if est_manual == "SUSPENDIDO":
+            bloqueado = True
+            motivo = "SUSPENSIÓN ADMINISTRATIVA"
+        elif est_manual == "BLOQUEADO_LIMITE":
+            bloqueado = True
+            motivo = "BLOQUEADO POR EXCESO DE LÍMITE"
+        elif exp_epoch > 0 and ahora >= exp_epoch:
+            bloqueado = True
+            motivo = "CUENTA EXPIRADA POR TIEMPO"
+        elif exp_epoch == 0 and u in shadow_exp and shadow_exp[u] <= hoy_dias:
+            bloqueado = True
+            motivo = "CUENTA EXPIRADA EN SHADOW"
+
+        if bloqueado:
+            if shells.get(u) != "/bin/expired" or not shadow_locked.get(u, False) or sesiones:
+                bloquear_usuario_individual(u, sesiones, motivo)
+            continue
+
+        if len(sesiones) > lim:
+            sesiones.sort(key=lambda x: x[0])
+            excedentes = sesiones[lim:]
+            for _, pid in excedentes:
+                try:
+                    if pid > 1:
+                        os.kill(pid, signal.SIGKILL)
+                except Exception:
+                    pass
+            registrar_evento_bloqueo(u, f"EXCESO DE LÍMITE CORREGIDO ({len(sesiones)}/{lim} sesiones)")
+
+def main():
+    lock_fd = open(LOCK_FILE, "w")
+    try:
+        fcntl.flock(lock_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except IOError:
+        return
+    while True:
+        try:
+            ciclo_control()
+        except Exception:
+            pass
+        time.sleep(3)
+
+if __name__ == "__main__":
+    main()
+LIM_EOF
+    chmod +x /usr/local/bin/blue-limiter.py
+
+    cat << 'LSRV_EOF' > /etc/systemd/system/blue-limiter.service
+[Unit]
+Description=Demonio Auto-Limitador y Bloqueo Individual 24/7 (BLUE COMPANY v9.1)
+After=network.target
+
+[Service]
+Type=simple
+User=root
+ExecStart=/usr/bin/python3 /usr/local/bin/blue-limiter.py
+Restart=always
+RestartSec=2
+
+[Install]
+WantedBy=multi-user.target
+LSRV_EOF
+
+    systemctl daemon-reload
+    systemctl reset-failed blue-limiter &>/dev/null
+    systemctl enable blue-limiter &>/dev/null
+    systemctl restart blue-limiter &>/dev/null
+    sleep 0.4
+
+    if systemctl is-active --quiet blue-limiter; then
+        echo -e "  ${C_GREEN}[✓] Auto-Limitador 24/7 activo (Control individual con registro de motivo y fecha).${C_RESET}"
+    else
+        echo -e "  ${C_RED}[!] No se pudo iniciar blue-limiter.service.${C_RESET}"
+    fi
+
+    if [ "$silencioso" != "1" ]; then
+        read -r -p "  Presiona Enter para volver al panel..."
+    fi
 }
 
 instalar_badvpn_auto() {
-    echo -e "  ${C_YELLOW}[!] No se instala ni reinicia BadVPN desde el panel protegido. El servidor permanece sin cambios.${C_RESET}"
-    return 1
+    local silencioso="$1"
+    if [ "$silencioso" != "1" ]; then
+        mostrar_pantalla_encabezado
+        echo -e "${C_NEON}┌───── INSTALADOR BADVPN UDPGW (PUERTO 7300) ──────────┐${C_RESET}"
+        if pgrep -f "badvpn-udpgw" &>/dev/null; then
+            echo -e "  ${C_YELLOW}[!] BadVPN UDPGW ya está en ejecución en el puerto 7300.${C_RESET}"
+            read -r -p "  ¿Confirmas reinstalar/reiniciar BadVPN? (s/n): " c_bv
+            [[ ! "$c_bv" =~ ^[sS]$ ]] && return
+        fi
+    fi
+
+    if [ ! -x /usr/local/bin/badvpn-udpgw ]; then
+        echo -e "  ${C_CYAN}[*] Verificando dependencias de compilación para BadVPN...${C_RESET}"
+        export DEBIAN_FRONTEND=noninteractive
+        apt-get update -y &>/dev/null
+        apt-get install -y cmake make gcc git curl psmisc &>/dev/null
+
+        echo -e "  ${C_CYAN}[*] Compilando BadVPN-UDPGW para arquitectura $(uname -m)...${C_RESET}"
+        rm -rf /tmp/badvpn-build
+        if git clone --depth 1 https://github.com/ambrop72/badvpn.git /tmp/badvpn-build &>/dev/null; then
+            sed -i 's/cmake_minimum_required.*/cmake_minimum_required(VERSION 3.5)/g' /tmp/badvpn-build/CMakeLists.txt 2>/dev/null
+            mkdir -p /tmp/badvpn-build/build
+            cd /tmp/badvpn-build/build || return
+            cmake .. -DBUILD_NOTHING_BY_DEFAULT=1 -DBUILD_UDPGW=1 -DCMAKE_POLICY_VERSION_MINIMUM=3.5 &>/dev/null
+            make -j"$(nproc)" &>/dev/null
+            if [ -f /tmp/badvpn-build/build/udpgw/badvpn-udpgw ]; then
+                cp -f /tmp/badvpn-build/build/udpgw/badvpn-udpgw /usr/local/bin/badvpn-udpgw
+                chmod +x /usr/local/bin/badvpn-udpgw
+            fi
+            cd /root || cd /
+            rm -rf /tmp/badvpn-build
+        fi
+    fi
+
+    if [ ! -x /usr/local/bin/badvpn-udpgw ] && [ "$(uname -m)" = "x86_64" ]; then
+        curl -sL "https://raw.githubusercontent.com/daybreakersx/premscript/master/badvpn-udpgw64" -o /usr/local/bin/badvpn-udpgw
+        chmod +x /usr/local/bin/badvpn-udpgw
+    fi
+
+    cat << 'BVEOF' > /etc/systemd/system/badvpn.service
+[Unit]
+Description=BadVPN UDPGW Server Puerto 7300 (BLUE COMPANY)
+After=network.target
+
+[Service]
+Type=simple
+User=root
+ExecStart=/usr/local/bin/badvpn-udpgw --listen-addr 127.0.0.1:7300 --max-clients 1000 --max-connections-for-client 100 --client-socket-sndbuf 1048576
+Restart=always
+RestartSec=2
+LimitNOFILE=65535
+
+[Install]
+WantedBy=multi-user.target
+BVEOF
+
+    systemctl daemon-reload
+    systemctl enable badvpn &>/dev/null
+    systemctl restart badvpn &>/dev/null
+    sleep 0.5
+
+    if pgrep -f "badvpn-udpgw" &>/dev/null; then
+        echo -e "  ${C_GREEN}[✓] BadVPN UDPGW activo en puerto 7300.${C_RESET}"
+    else
+        echo -e "  ${C_RED}[!] Error al iniciar BadVPN 7300.${C_RESET}"
+    fi
+
+    if [ "$silencioso" != "1" ]; then
+        read -r -p "  Presiona Enter para volver al panel..."
+    fi
 }
 
 optimizar_tcp_sin_retraso() {
-    echo -e "  ${C_YELLOW}[!] No se aplican cambios de sysctl, interfaces de red ni configuración SSH. El servidor permanece sin cambios.${C_RESET}"
-    return 1
+    local silencioso="$1"
+    if [ "$silencioso" != "1" ]; then
+        mostrar_pantalla_encabezado
+        echo -e "${C_NEON}┌───── OPTIMIZACIÓN DE RED SIN RETRASO (BBR) ──────────┐${C_RESET}"
+    fi
+
+    modprobe tcp_bbr 2>/dev/null
+    modprobe sch_fq 2>/dev/null
+
+    cat << 'SYSEOF' > /etc/sysctl.d/99-bluecompany-tcp.conf
+# Perfil Corporativo Sin Retraso TCP - BLUE COMPANY v9.1
+net.core.default_qdisc = fq
+net.ipv4.tcp_congestion_control = bbr
+net.ipv4.tcp_low_latency = 1
+net.ipv4.tcp_fastopen = 3
+net.ipv4.tcp_mtu_probing = 1
+net.ipv4.tcp_no_metrics_save = 1
+net.ipv4.tcp_sack = 1
+net.ipv4.tcp_fack = 1
+net.ipv4.tcp_window_scaling = 1
+net.ipv4.tcp_adv_win_scale = 2
+net.ipv4.tcp_tw_reuse = 1
+net.ipv4.tcp_fin_timeout = 15
+net.ipv4.tcp_keepalive_time = 60
+net.ipv4.tcp_keepalive_intvl = 10
+net.ipv4.tcp_keepalive_probes = 5
+net.ipv4.tcp_synack_retries = 2
+net.ipv4.tcp_syn_retries = 2
+net.core.rmem_max = 33554432
+net.core.wmem_max = 33554432
+net.ipv4.tcp_rmem = 4096 87380 33554432
+net.ipv4.tcp_wmem = 4096 65536 33554432
+net.core.netdev_max_backlog = 32768
+net.core.somaxconn = 32768
+SYSEOF
+
+    sysctl --system &>/dev/null
+
+    if [ -f /etc/ssh/sshd_config ]; then
+        sed -i '/^#*UseDNS/d' /etc/ssh/sshd_config
+        sed -i '/^#*TCPKeepAlive/d' /etc/ssh/sshd_config
+        sed -i '/^#*Banner /d' /etc/ssh/sshd_config
+        echo "UseDNS no" >> /etc/ssh/sshd_config
+        echo "TCPKeepAlive yes" >> /etc/ssh/sshd_config
+        systemctl reload ssh 2>/dev/null || systemctl reload sshd 2>/dev/null
+    fi
+
+    local iface
+    iface=$(ip route show default 2>/dev/null | awk '{print $5; exit}')
+    [ -n "$iface" ] && ip link set dev "$iface" txqueuelen 5000 2>/dev/null
+
+    echo -e "  ${C_GREEN}[✓] Optimización TCP BBR + LowLatency aplicada.${C_RESET}"
+
+    if [ "$silencioso" != "1" ]; then
+        read -r -p "  Presiona Enter para volver al panel..."
+    fi
 }
 
 instalacion_completa_vps() {
-    echo -e "  ${C_YELLOW}[!] El despliegue masivo está deshabilitado para evitar cambios sobre un VPS ya configurado. El servidor permanece sin cambios.${C_RESET}"
-    return 1
+    mostrar_pantalla_encabezado
+    echo -e "${C_NEON}┌───── DESPLIEGUE CORPORATIVO 1-CLICK (VPS NUEVA) ─────┐${C_RESET}"
+    echo -e "  ${C_YELLOW}[!] Esta opción despliega todos los servicios base de BLUE COMPANY.${C_RESET}"
+    read -r -p "  ¿Confirmas ejecutar el despliegue de componentes? (s/n): " conf_dep
+    [[ ! "$conf_dep" =~ ^[sS]$ ]] && return
+
+    optimizar_tcp_sin_retraso "1"
+    echo -e "${C_BLUE}────────────────────────────────────────────────────────${C_RESET}"
+    instalar_dropbear_auto "1"
+    echo -e "${C_BLUE}────────────────────────────────────────────────────────${C_RESET}"
+    instalar_despachador_auto "1"
+    echo -e "${C_BLUE}────────────────────────────────────────────────────────${C_RESET}"
+    instalar_limitador_auto "1"
+    echo -e "${C_BLUE}────────────────────────────────────────────────────────${C_RESET}"
+    instalar_badvpn_auto "1"
+    echo -e "${C_BLUE}────────────────────────────────────────────────────────${C_RESET}"
+    echo -e "  ${C_GREEN}[✓] ¡Infraestructura BLUE COMPANY ${EDICION_SCRIPT} desplegada al 100%!${C_RESET}"
+    read -r -p "  Presiona Enter para volver al panel..."
 }
 
 informacion_version_y_modulos() {
@@ -1819,7 +2762,7 @@ informacion_version_y_modulos() {
 }
 
 # ==============================================================================
-# MENÚ PRINCIPAL ORGANIZADO EN 4 CATEGORÍAS CORPORATIVAS (ENTERPRISE v9.0)
+# MENÚ PRINCIPAL ORGANIZADO EN 4 CATEGORÍAS CORPORATIVAS (ENTERPRISE v9.1)
 # ==============================================================================
 
 while true; do
@@ -1837,7 +2780,7 @@ while true; do
     echo -e "  ${C_NEON}[08]${C_RESET} ${C_WHITE}Monitor de consumo por usuario${C_RESET}"
     echo -e "  ${C_NEON}[09]${C_RESET} ${C_WHITE}Bloqueos automáticos (Auto-Limitador y Reintegro)${C_RESET}"
     echo -e "  ${C_NEON}[10]${C_RESET} ${C_WHITE}Historial (Bloqueos, motivos y auditoría)${C_RESET}"
-    echo -e "  ${C_NEON}[11]${C_RESET} ${C_WHITE}Seguridad (Anti-BruteForce, IPs y Anti-Torrent)${C_RESET}"
+    echo -e "  ${C_NEON}[11]${C_RESET} ${C_WHITE}Centro de seguridad y estado del servidor${C_RESET}"
     echo -e ""
     echo -e "  ${C_CYAN}━━ 3. INFRAESTRUCTURA ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${C_RESET}"
     echo -e "  ${C_NEON}[12]${C_RESET} ${C_WHITE}Estado de servicios (BLUE COMPANY vs Externos)${C_RESET}"
@@ -1847,15 +2790,14 @@ while true; do
     echo -e "  ${C_NEON}[16]${C_RESET} ${C_WHITE}Información técnica del VPS${C_RESET}"
     echo -e ""
     echo -e "  ${C_CYAN}━━ 4. HERRAMIENTAS Y MANTENIMIENTO ━━━━━━━━━━━━━━━━━━━${C_RESET}"
-    echo -e "  ${C_NEON}[17]${C_RESET} ${C_YELLOW}Actualización desde GitHub (Con Backup y Rollback)${C_RESET}"
-    echo -e "  ${C_NEON}[18]${C_RESET} ${C_WHITE}Copias de seguridad (Manuales e Históricas)${C_RESET}"
-    echo -e "  ${C_NEON}[19]${C_RESET} ${C_WHITE}Restauración de respaldos${C_RESET}"
-    echo -e "  ${C_NEON}[20]${C_RESET} ${C_WHITE}Reparación inteligente (Sin corte de túneles)${C_RESET}"
-    echo -e "  ${C_NEON}[21]${C_RESET} ${C_WHITE}Información de versión y Módulos base${C_RESET}"
+    echo -e "  ${C_NEON}[17]${C_RESET} ${C_YELLOW}Actualización desde GitHub${C_RESET}"
+    echo -e "  ${C_NEON}[18]${C_RESET} ${C_WHITE}Reparación inteligente (Sin corte de túneles)${C_RESET}"
+    echo -e "  ${C_NEON}[19]${C_RESET} ${C_WHITE}Información de versión y Módulos base${C_RESET}"
+    echo -e "  ${C_NEON}[20]${C_RESET} ${C_WHITE}Administrar Anti-Torrent${C_RESET}"
     echo -e "${C_BLUE}────────────────────────────────────────────────────────${C_RESET}"
     echo -e "  ${C_RED}[00]${C_RESET} ${C_GRAY}Salir del Panel${C_RESET}"
     echo -e "${C_BLUE}════════════════════════════════════════════════════════${C_RESET}"
-    read -r -p "  ► Selecciona una opción [0-21]: " opcion
+    read -r -p "  ► Selecciona una opción [0-20]: " opcion
 
     case "$opcion" in
         1|01) crear_usuario ;;
@@ -1875,10 +2817,9 @@ while true; do
         15)   diagnostico_integral_vps ;;
         16)   informacion_ficha_vps ;;
         17)   actualizar_desde_github ;;
-        18)   menu_copias_seguridad ;;
-        19)   menu_restaurar_respaldo ;;
-        20)   reparacion_inteligente_vps ;;
-        21)   informacion_version_y_modulos ;;
+        18)   reparacion_inteligente_vps ;;
+        19)   informacion_version_y_modulos ;;
+        20)   escudo_y_mantenimiento_vps ;;
         0|00)
             flock -u 9 2>/dev/null
             clear
