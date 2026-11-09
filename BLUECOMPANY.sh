@@ -23,7 +23,6 @@ SECURITY_LOG="${LOG_DIR}/security.log"
 PANEL_LOCK="/run/bluecompany-panel.lock"
 UPDATE_LOCK="/run/bluecompany-update.lock"
 MONITOR_LOCK="/run/bluecompany-monitor.lock"
-UPDATE_CACHE="/run/bluecompany-update.cache"
 
 # ------------------------------------------------------------------------------
 # AUTO-ELEVACIÓN Y ENTORNO SEGURO
@@ -77,7 +76,7 @@ inicializar_entorno_seguro() {
         awk '!seen[$0]++ || $0 !~ /adm-ssh|blue-limiter/' /etc/crontab > /tmp/.crontab.blue.$$ && mv -f /tmp/.crontab.blue.$$ /etc/crontab
     fi
 
-    # INICIO AUTOMÁTICO EN SSH INTERACTIVO (Seguro, no afecta SCP/SFTP)
+    # INICIO AUTOMÁTICO EN SSH INTERACTIVO (Seguro, no afecta SCP/SFTP/Túneles)
     local bashrc_file="$HOME/.bashrc"
     if [ -f "$bashrc_file" ]; then
         if ! grep -q "BLUECOMPANY_RUNNING" "$bashrc_file"; then
@@ -822,7 +821,7 @@ listar_usuarios_en_vivo() {
         generar_banner
         echo -e "${C_NEON}  MONITOR INTELIGENTE DE USUARIOS EN TIEMPO REAL (2s)${C_RESET}"
         echo -e "${C_BLUE}────────────────────────────────────────────────────────${C_RESET}"
-        printf "${C_BOLD}${C_CYAN} %-11s %-15s %-7s %-8s %-9s %-10s${C_RESET}\n" "USUARIO" "IP CLIENTE" "SES/LIM" "TIEMPO" "CONSUMO" "ESTADO"
+        printf "${C_BOLD}${C_CYAN} %-12s %-16s %-8s %-10s %-12s %-10s${C_RESET}\n" "USUARIO" "IP CLIENTE" "SES/LIM" "TIEMPO" "CONSUMO" "ESTADO"
         echo -e "${C_BLUE}────────────────────────────────────────────────────────${C_RESET}"
         local total_online=0 total_conex=0 hoy_epoch=$(date +%s)
         local mapa_db=$(obtener_mapa_dropbear)
@@ -847,7 +846,7 @@ listar_usuarios_en_vivo() {
                 elif [ "$activas" -gt "$limite" ]; then estado="${C_RED}▲ Excedido${C_RESET}"
                 elif [ "$activas" -gt 0 ]; then estado="${C_GREEN}● Online${C_RESET}"
                 fi
-                printf " ${C_WHITE}%-11.11s${C_RESET} %-15.15s ${C_YELLOW}%-7s${C_RESET} %-8.8s %-9.9s %b\n" "$u" "$ip_u" "${activas}/${limite}" "$t_con" "$cons_u" "$estado"
+                printf " ${C_WHITE}%-12.12s${C_RESET} ${C_GRAY}%-16.16s${C_RESET} ${C_YELLOW}%-8s${C_RESET} ${C_CYAN}%-10.10s${C_RESET} ${C_GREEN}%-12.12s${C_RESET} %b\n" "$u" "$ip_u" "${activas}/${limite}" "$t_con" "$cons_u" "$estado"
             done 3< "$DB_LIMITS"
         fi
         echo -e "${C_BLUE}────────────────────────────────────────────────────────${C_RESET}"
@@ -1503,12 +1502,11 @@ def ciclo_control():
         elif est_manual == "BLOQUEADO_LIMITE": bloqueado, motivo = True, "BLOQUEADO POR EXCESO DE LÍMITE"
         elif exp_epoch > 0 and ahora >= exp_epoch: bloqueado, motivo = True, "CUENTA EXPIRADA POR TIEMPO"
         if bloqueado:
-            # Verificar si ya está bloqueado para evitar reinicios innecesarios
             try:
                 with open("/etc/passwd", "r") as pf:
                     for line in pf:
                         if line.startswith(f"{u}:"):
-                            if "/bin/expired" in line: bloqueado = False # Ya está bloqueado
+                            if "/bin/expired" in line: bloqueado = False
                             break
             except Exception: pass
             if bloqueado: bloquear_usuario_individual(u, sesiones, motivo)
@@ -1650,6 +1648,45 @@ instalacion_completa_vps() {
     read -r -p "  Presiona Enter para volver al panel..."
 }
 
+# Módulo Anti-Torrent conservado e independiente
+activar_antitorrent() {
+    mostrar_pantalla_encabezado
+    echo -e "${C_NEON}┌────── ESCUDO ANTI-TORRENT / ANTI-P2P ──────────────┐${C_RESET}"
+    local estado_bt="${C_YELLOW}INACTIVO${C_RESET}"
+    if iptables -L FORWARD -n 2>/dev/null | grep -q "BitTorrent" || iptables -L OUTPUT -n 2>/dev/null | grep -q "BitTorrent"; then
+        estado_bt="${C_GREEN}PROTEGIDO (ACTIVO)${C_RESET}"
+    fi
+    echo -e "  Estado actual: $estado_bt"
+    echo -e "${C_BLUE}────────────────────────────────────────────────────────${C_RESET}"
+    echo -e "  ${C_WHITE}[1]${C_RESET} Activar Escudo Anti-Torrent / Bloqueo P2P"
+    echo -e "  ${C_WHITE}[2]${C_RESET} Desactivar Reglas Anti-Torrent"
+    echo -e "  ${C_GRAY}[0] Volver${C_RESET}"
+    read -r -p "  ► Opción: " op_at
+    case "$op_at" in
+        1)
+            for cadena in FORWARD OUTPUT; do
+                for firma in "BitTorrent" "BitTorrent protocol" "peer_id=" ".torrent" "announce.php?passkey=" "info_hash" "get_peers" "find_node"; do
+                    iptables -C "$cadena" -m string --string "$firma" --algo bm -j DROP 2>/dev/null || \
+                    iptables -A "$cadena" -m string --string "$firma" --algo bm -j DROP 2>/dev/null
+                done
+            done
+            registrar_accion_admin "ESCUDO_ANTITORRENT" "Estado=ACTIVADO"
+            echo -e "\n  ${C_GREEN}[✓] Escudo Anti-Torrent activado en el firewall del Kernel.${C_RESET}"
+            ;;
+        2)
+            for cadena in FORWARD OUTPUT; do
+                for firma in "BitTorrent" "BitTorrent protocol" "peer_id=" ".torrent" "announce.php?passkey=" "info_hash" "get_peers" "find_node"; do
+                    while iptables -D "$cadena" -m string --string "$firma" --algo bm -j DROP 2>/dev/null; do :; done
+                done
+            done
+            registrar_accion_admin "ESCUDO_ANTITORRENT" "Estado=DESACTIVADO"
+            echo -e "\n  ${C_YELLOW}[!] Reglas Anti-Torrent desactivadas.${C_RESET}"
+            ;;
+        *) return ;;
+    esac
+    read -r -p "  Presiona Enter para volver..."
+}
+
 informacion_version_y_modulos() {
     mostrar_pantalla_encabezado
     local v_rem=$(curl -sL --max-time 3 "$GITHUB_VERSION_URL" 2>/dev/null | tr -d '[:space:]')
@@ -1707,11 +1744,12 @@ while true; do
     echo -e "  ${C_CYAN}━━ 4. HERRAMIENTAS Y MANTENIMIENTO ━━━━━━━━━━━━━━━━━━━${C_RESET}"
     echo -e "  ${C_NEON}[17]${C_RESET} ${C_YELLOW}Actualización desde GitHub (Validación estricta)${C_RESET}"
     echo -e "  ${C_NEON}[18]${C_RESET} ${C_WHITE}Reparación inteligente (Sin corte de túneles)${C_RESET}"
-    echo -e "  ${C_NEON}[19]${C_RESET} ${C_WHITE}Información de versión y Módulos base${C_RESET}"
+    echo -e "  ${C_NEON}[19]${C_RESET} ${C_WHITE}Gestión de Escudo Anti-Torrent (P2P)${C_RESET}"
+    echo -e "  ${C_NEON}[20]${C_RESET} ${C_WHITE}Información de versión y Módulos base${C_RESET}"
     echo -e "${C_BLUE}────────────────────────────────────────────────────────${C_RESET}"
     echo -e "  ${C_RED}[00]${C_RESET} ${C_GRAY}Salir del Panel${C_RESET}"
     echo -e "${C_BLUE}════════════════════════════════════════════════════════${C_RESET}"
-    read -r -p "  ► Selecciona una opción [0-19]: " opcion
+    read -r -p "  ► Selecciona una opción [0-20]: " opcion
     case "$opcion" in
         1|01) crear_usuario ;;
         2|02) modificar_usuario ;;
@@ -1731,7 +1769,8 @@ while true; do
         16) informacion_ficha_vps ;;
         17) actualizar_desde_github ;;
         18) reparacion_inteligente_vps ;;
-        19) informacion_version_y_modulos ;;
+        19) activar_antitorrent ;;
+        20) informacion_version_y_modulos ;;
         0|00) flock -u 9 2>/dev/null; clear; exit 0 ;;
         *) echo -e "\n${C_RED}[!] Opción no válida.${C_RESET}"; sleep 1 ;;
     esac
