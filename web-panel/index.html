@@ -1,0 +1,88 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#07111f">
+  <title>BLUE COMPANY · Panel</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <div class="app-shell">
+    <aside class="sidebar" id="sidebar">
+      <a class="brand" href="#dashboard" aria-label="BLUE COMPANY inicio">
+        <span class="brand-mark">BC</span><span><strong>BLUE COMPANY</strong><small>CLOUD NETWORK MANAGER</small></span>
+      </a>
+      <div class="nav-label">PRINCIPAL</div>
+      <nav class="navigation" aria-label="Navegación principal">
+        <a class="nav-link active" href="#dashboard" data-page="dashboard"><span>▦</span> Resumen</a>
+        <div class="nav-label">GESTIÓN COMERCIAL</div>
+        <a class="nav-link" href="#users" data-page="users"><span>♙</span> Usuarios <b class="nav-count">24</b></a>
+        <a class="nav-link" href="#limits" data-page="limits"><span>◷</span> Límites y sesiones</a>
+        <a class="nav-link" href="#expiry" data-page="expiry"><span>▣</span> Vencimientos</a>
+        <div class="nav-label">MONITOREO Y SEGURIDAD</div>
+        <a class="nav-link" href="#monitor" data-page="monitor"><span>⌁</span> Monitor en vivo <i class="live-dot"></i></a>
+        <a class="nav-link" href="#security" data-page="security"><span>⬡</span> Seguridad y auditoría</a>
+        <div class="nav-label">INFRAESTRUCTURA</div>
+        <a class="nav-link" href="#services" data-page="services"><span>◈</span> Servicios</a>
+        <a class="nav-link" href="#diagnostics" data-page="diagnostics"><span>⌘</span> Diagnóstico VPS</a>
+        <a class="nav-link" href="#settings" data-page="settings"><span>⚙</span> Ajustes</a>
+      </nav>
+      <div class="sidebar-bottom"><span class="avatar">DA</span><span><strong>Administrador</strong><small>Prototipo local</small></span><span class="more">···</span></div>
+    </aside>
+
+    <main class="main-content">
+      <header class="topbar">
+        <button class="mobile-menu" id="menuToggle" aria-label="Abrir menú">☰</button>
+        <div class="breadcrumbs">BLUE COMPANY <span>/</span> <strong id="currentCrumb">Resumen</strong></div>
+        <div class="top-actions"><span class="environment"><i></i> MODO DEMO</span><button class="icon-button" title="Notificaciones" aria-label="Notificaciones">♧<em></em></button><span class="top-avatar">DA</span></div>
+      </header>
+
+      <section class="page active" id="page-dashboard">
+        <div class="page-heading"><div><p class="eyebrow">PANEL DE CONTROL <span>•</span> 11 NOV 2026</p><h1>Resumen del servidor</h1><p class="subheading">Vista general de BLUE COMPANY y sus módulos.</p></div><button class="button button-secondary" id="refreshBtn">↻ <span>Actualizar vista</span></button></div>
+        <div class="demo-notice"><span>ⓘ</span><div><strong>Vista de demostración</strong><p>Los valores que aparecen son de ejemplo. Este panel todavía no está conectado a tu servidor ni ejecuta cambios.</p></div><span class="notice-tag">SOLO LECTURA</span></div>
+        <div class="stat-grid">
+          <article class="stat-card"><div class="stat-top"><span>Usuarios registrados</span><span class="stat-icon blue">♙</span></div><strong>24</strong><small><b class="positive">+3</b> este mes</small><div class="mini-bars"><i style="height:30%"></i><i style="height:48%"></i><i style="height:38%"></i><i style="height:65%"></i><i style="height:54%"></i><i style="height:82%"></i><i style="height:70%"></i><i style="height:96%"></i></div></article>
+          <article class="stat-card"><div class="stat-top"><span>Sesiones activas</span><span class="stat-icon green">⌁</span></div><strong>18 <small class="muted">/ 42</small></strong><small><b class="positive">●</b> dentro de los límites</small><div class="progress"><i style="width:43%"></i></div></article>
+          <article class="stat-card"><div class="stat-top"><span>Servicios activos</span><span class="stat-icon purple">◈</span></div><strong>4 <small class="muted">/ 5</small></strong><small><b class="warning-text">1 requiere revisión</b></small><div class="progress purple-progress"><i style="width:80%"></i></div></article>
+          <article class="stat-card"><div class="stat-top"><span>Uso de memoria</span><span class="stat-icon orange">▤</span></div><strong>62<small class="muted">%</small></strong><small>3.1 GB de 5.0 GB</small><div class="progress orange-progress"><i style="width:62%"></i></div></article>
+        </div>
+        <div class="content-grid">
+          <article class="panel-card server-card"><div class="card-heading"><div><h2>Estado del servidor</h2><p>Indicadores de sistema · datos de ejemplo</p></div><span class="status-pill status-ok"><i></i> Operativo</span></div>
+            <div class="server-summary"><div class="server-illustration">▤<span>●</span></div><div><strong>blue-vps-demo</strong><p>Ubuntu · Linux · 4 núcleos</p><small>Última comprobación: hace 1 min</small></div><span class="server-ip">203.0.113.42 <button title="Copiar IP" aria-label="Copiar IP">▢</button></span></div>
+            <div class="resource-list"><div class="resource-row"><span>CPU</span><div class="resource-track"><i style="width:38%"></i></div><b>38%</b><small>1.5 / 4 vCPU</small></div><div class="resource-row"><span>Memoria</span><div class="resource-track purple-track"><i style="width:62%"></i></div><b>62%</b><small>3.1 / 5.0 GB</small></div><div class="resource-row"><span>Disco</span><div class="resource-track orange-track"><i style="width:47%"></i></div><b>47%</b><small>23 / 50 GB</small></div></div>
+            <div class="server-footer"><span>IP pública <strong>203.0.113.42</strong></span><span>Uptime <strong>12 días, 4 h</strong></span><span>Kernel <strong>6.8.0</strong></span></div>
+          </article>
+          <article class="panel-card services-card"><div class="card-heading"><div><h2>Servicios</h2><p>Estado reportado (demo)</p></div><a href="#services" data-page="services" class="text-link">Ver todos →</a></div>
+            <div class="service-row"><span class="service-symbol ssh-symbol">S</span><span class="service-info"><strong>OpenSSH</strong><small>Puerto 22</small></span><span class="status-pill status-ok"><i></i> Activo</span></div>
+            <div class="service-row"><span class="service-symbol db-symbol">D</span><span class="service-info"><strong>Dropbear</strong><small>Puerto 2222</small></span><span class="status-pill status-ok"><i></i> Activo</span></div>
+            <div class="service-row"><span class="service-symbol ws-symbol">W</span><span class="service-info"><strong>Despachador WS</strong><small>Puerto 80</small></span><span class="status-pill status-ok"><i></i> Activo</span></div>
+            <div class="service-row"><span class="service-symbol udp-symbol">U</span><span class="service-info"><strong>BadVPN UDPGW</strong><small>Puerto 7300</small></span><span class="status-pill status-down"><i></i> Inactivo</span></div>
+            <div class="service-row"><span class="service-symbol lim-symbol">L</span><span class="service-info"><strong>Auto-limitador</strong><small>Vigilancia de sesiones</small></span><span class="status-pill status-ok"><i></i> Activo</span></div>
+          </article>
+        </div>
+        <div class="content-grid lower-grid">
+          <article class="panel-card table-card"><div class="card-heading"><div><h2>Actividad reciente</h2><p>Eventos administrativos de demostración</p></div><a href="#security" data-page="security" class="text-link">Ver auditoría →</a></div><div class="table-wrap"><table><thead><tr><th>EVENTO</th><th>USUARIO</th><th>FECHA</th><th>ESTADO</th></tr></thead><tbody>
+            <tr><td><span class="event-icon event-create">＋</span> Usuario creado</td><td>cliente_demo</td><td>Hoy, 10:42</td><td><span class="status-text green-text">Completado</span></td></tr>
+            <tr><td><span class="event-icon event-login">↗</span> Acceso registrado</td><td>operador01</td><td>Hoy, 09:18</td><td><span class="status-text green-text">Correcto</span></td></tr>
+            <tr><td><span class="event-icon event-warning">!</span> Límite cercano</td><td>cliente_07</td><td>Ayer, 22:06</td><td><span class="status-text warning-text">Revisar</span></td></tr>
+          </tbody></table></div></article>
+          <article class="panel-card expiry-card"><div class="card-heading"><div><h2>Próximos vencimientos</h2><p>Cuentas próximas a expirar</p></div><a href="#expiry" data-page="expiry" class="text-link">Ver todos →</a></div><div class="expiry-item"><span class="expiry-avatar">CL</span><span class="expiry-user"><strong>cliente_12</strong><small>vence en 2 días</small></span><span class="expiry-date">13 Nov</span></div><div class="expiry-item"><span class="expiry-avatar avatar-purple">DM</span><span class="expiry-user"><strong>demo_4831</strong><small>vence en 5 días</small></span><span class="expiry-date">16 Nov</span></div><div class="expiry-item"><span class="expiry-avatar avatar-orange">U3</span><span class="expiry-user"><strong>usuario_03</strong><small>vence en 7 días</small></span><span class="expiry-date">18 Nov</span></div></article>
+        </div>
+        <footer class="footer"><span>BLUE COMPANY <b>·</b> Prototipo de interfaz</span><span>v1.0.0 <b>·</b> Modo demostración</span></footer>
+      </section>
+
+      <section class="page placeholder-page" id="page-users"><div class="page-heading"><div><p class="eyebrow">GESTIÓN COMERCIAL</p><h1>Usuarios</h1><p class="subheading">Vista de ejemplo de cuentas administradas.</p></div><button class="button button-primary" data-demo-action>＋ Crear usuario</button></div><div class="demo-notice"><span>ⓘ</span><div><strong>Prototipo no conectado</strong><p>La gestión real de cuentas requiere un backend y permisos explícitos en el servidor.</p></div><span class="notice-tag">DEMO</span></div><article class="panel-card table-card"><div class="toolbar"><input id="userSearch" type="search" placeholder="⌕  Buscar usuario..." aria-label="Buscar usuario"><select id="userFilter" aria-label="Filtrar estado"><option value="all">Todos los estados</option><option value="Activo">Activo</option><option value="Suspendido">Suspendido</option><option value="Por vencer">Por vencer</option></select></div><div class="table-wrap"><table><thead><tr><th>USUARIO</th><th>LÍMITE</th><th>SESIONES</th><th>VENCIMIENTO</th><th>ESTADO</th><th></th></tr></thead><tbody id="userRows"></tbody></table></div></article></section>
+      <section class="page placeholder-page" id="page-limits"><div class="page-heading"><div><p class="eyebrow">GESTIÓN COMERCIAL</p><h1>Límites y sesiones</h1><p class="subheading">Uso de conexiones por cuenta · datos de ejemplo.</p></div></div><div class="demo-notice"><span>ⓘ</span><div><strong>Solo visualización</strong><p>No se cerrará ninguna sesión ni se aplicarán bloqueos desde este prototipo.</p></div></div><div class="simple-grid" id="limitCards"></div></section>
+      <section class="page placeholder-page" id="page-expiry"><div class="page-heading"><div><p class="eyebrow">GESTIÓN COMERCIAL</p><h1>Vencimientos</h1><p class="subheading">Calendario de ejemplo de fechas de expiración.</p></div></div><div class="demo-notice"><span>ⓘ</span><div><strong>Sin cambios en el servidor</strong><p>Los vencimientos mostrados son ficticios.</p></div></div><article class="panel-card table-card"><div class="table-wrap"><table><thead><tr><th>USUARIO</th><th>FECHA</th><th>TIEMPO RESTANTE</th><th>ESTADO</th></tr></thead><tbody id="expiryRows"></tbody></table></div></article></section>
+      <section class="page placeholder-page" id="page-monitor"><div class="page-heading"><div><p class="eyebrow">MONITOREO Y SEGURIDAD</p><h1>Monitor en vivo</h1><p class="subheading">Sesiones y actividad simuladas.</p></div><span class="status-pill status-ok"><i></i> SIMULACIÓN</span></div><div class="demo-notice"><span>ⓘ</span><div><strong>Sin conexión en tiempo real</strong><p>Esta vista contiene datos estáticos. No inspecciona procesos, conexiones ni memoria del servidor.</p></div></div><article class="panel-card table-card"><div class="table-wrap"><table><thead><tr><th>USUARIO</th><th>IP DE EJEMPLO</th><th>SESIONES / LÍMITE</th><th>TIEMPO</th><th>ESTADO</th></tr></thead><tbody><tr><td>operador01</td><td>192.0.2.18</td><td>1 / 2</td><td>01:24:18</td><td><span class="status-pill status-ok"><i></i> Online</span></td></tr><tr><td>cliente_07</td><td>198.51.100.24</td><td>2 / 2</td><td>00:48:02</td><td><span class="status-pill status-ok"><i></i> Online</span></td></tr><tr><td>cliente_demo</td><td>203.0.113.9</td><td>1 / 1</td><td>00:12:41</td><td><span class="status-pill status-ok"><i></i> Online</span></td></tr></tbody></table></div></article></section>
+      <section class="page placeholder-page" id="page-security"><div class="page-heading"><div><p class="eyebrow">MONITOREO Y SEGURIDAD</p><h1>Seguridad y auditoría</h1><p class="subheading">Registro demostrativo de actividad administrativa.</p></div></div><div class="demo-notice"><span>ⓘ</span><div><strong>Registro de ejemplo</strong><p>Para producción, la auditoría debe generarse y protegerse en el backend.</p></div></div><article class="panel-card table-card"><div class="table-wrap"><table><thead><tr><th>FECHA</th><th>ACCIÓN</th><th>ADMINISTRADOR</th><th>DETALLE</th></tr></thead><tbody><tr><td>11 Nov, 10:42</td><td>CREAR_USUARIO</td><td>admin-demo</td><td>cliente_demo · modo de prueba</td></tr><tr><td>11 Nov, 09:18</td><td>INICIO_SESIÓN</td><td>admin-demo</td><td>Acceso local ficticio</td></tr><tr><td>10 Nov, 22:06</td><td>ALERTA_LÍMITE</td><td>Sistema demo</td><td>cliente_07 · 2/2 sesiones</td></tr></tbody></table></div></article></section>
+      <section class="page placeholder-page" id="page-services"><div class="page-heading"><div><p class="eyebrow">INFRAESTRUCTURA</p><h1>Servicios</h1><p class="subheading">Estado ilustrativo de los componentes del script.</p></div></div><div class="demo-notice"><span>ⓘ</span><div><strong>Sin acciones de servicio</strong><p>Este prototipo no instala, inicia, detiene ni reconfigura servicios.</p></div></div><div class="simple-grid" id="serviceCards"></div></section>
+      <section class="page placeholder-page" id="page-diagnostics"><div class="page-heading"><div><p class="eyebrow">INFRAESTRUCTURA</p><h1>Diagnóstico VPS</h1><p class="subheading">Resumen de métricas ficticias.</p></div></div><div class="demo-notice"><span>ⓘ</span><div><strong>Sin diagnóstico del host</strong><p>Las métricas solo serán reales al conectar un agente de servidor seguro.</p></div></div><div class="simple-grid"><article class="panel-card info-card"><small>CPU</small><strong>38%</strong><span>4 vCPU · ejemplo</span></article><article class="panel-card info-card"><small>MEMORIA</small><strong>62%</strong><span>3.1 / 5.0 GB · ejemplo</span></article><article class="panel-card info-card"><small>DISCO</small><strong>47%</strong><span>23 / 50 GB · ejemplo</span></article><article class="panel-card info-card"><small>RED</small><strong>12.8 GB</strong><span>tráfico simulado</span></article></div></section>
+      <section class="page placeholder-page" id="page-settings"><div class="page-heading"><div><p class="eyebrow">SISTEMA</p><h1>Ajustes</h1><p class="subheading">Preferencias de demostración.</p></div></div><div class="demo-notice"><span>ⓘ</span><div><strong>Configuración no persistente</strong><p>El prototipo no contiene autenticación ni configura el servidor. No lo publiques con datos reales.</p></div></div><article class="panel-card settings-card"><h2>Entorno del panel</h2><div class="setting-row"><span><strong>Modo de demostración</strong><small>Datos locales ficticios; no se realizan cambios en el host.</small></span><span class="status-pill status-ok"><i></i> Activo</span></div><div class="setting-row"><span><strong>Conexión a agente</strong><small>No configurada</small></span><span class="status-pill status-down"><i></i> Desconectada</span></div><div class="setting-row"><span><strong>Autenticación</strong><small>Debe añadirse antes de desplegar en un servidor.</small></span><span class="status-pill status-down"><i></i> Pendiente</span></div></article></section>
+    </main>
+  </div>
+  <div class="toast" id="toast" role="status" aria-live="polite"></div>
+  <script src="app.js"></script>
+</body>
+</html>
